@@ -13,13 +13,13 @@ async function bootstrap() {
   // Connect microservice (TCP)
   app.connectMicroservice({
     transport: Transport.TCP,
-    options: { host: '0.0.0.0', port: 3003 },
+    options: { host: '0.0.0.0', port: 3005 },
   });
 
   await app.startAllMicroservices(); // Start microservice
   await app.listen(3004); // Start REST API
-  console.log('REST API running on port 3000');
-  console.log('TCP Microservice running on port 3003');
+  console.log('REST API running on port 3004');
+  console.log('TCP Microservice running on port 3005');
 }
 
 bootstrap();

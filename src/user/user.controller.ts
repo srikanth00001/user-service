@@ -2,12 +2,15 @@ import { Controller, Post, Body, Get, Param, Put, Delete, UseGuards } from '@nes
 import { MessagePattern } from '@nestjs/microservices';
 import { UserService } from './user.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Connection } from 'typeorm';
+import { DatabaseManagementService } from './database-management.service';
 
 @Controller('users')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
-
-  // ============= REST API ROUTES =============
+  constructor(
+    private readonly userService: UserService,
+    private readonly databaseManagementService: DatabaseManagementService,
+  ) {}
 
   @UseGuards(JwtAuthGuard)
   @Post()
@@ -39,11 +42,9 @@ export class UserController {
     return this.userService.deleteUser(id);
   }
 
-  // ============= MICRO SERVICE LISTENERS =============
-
   @MessagePattern({ cmd: 'findUserByEmail' })
   async findUserByEmail(email: string) {
-    return this.userService.findUserByEmail(email); // Delegate to UserService
+    return this.userService.findUserByEmail(email);
   }
 
   @MessagePattern({ cmd: 'findUserByEmailOrMobile' })
@@ -77,13 +78,39 @@ export class UserController {
   }
 
   @MessagePattern({ cmd: 'updateUserByMicroservice' })
-async updateUserByMicroservice(data: { id: string; passwordAlreadyHashed?: boolean; [key: string]: any }) {
-  return this.userService.updateUser(data.id, data, data.passwordAlreadyHashed);
-}
-
+  async updateUserByMicroservice(data: { id: string; passwordAlreadyHashed?: boolean; database?: string; [key: string]: any }) {
+    if (data.database) {
+      const connection = await this.databaseManagementService.getConnection(data.database);
+      await this.userService.setConnection(connection);
+    }
+    return this.userService.updateUser(data.id, data, data.passwordAlreadyHashed);
+  }
 
   @MessagePattern({ cmd: 'findRoleByName' })
   async findRoleByName(name: string) {
     return this.userService.findRoleByName(name);
+  }
+
+  @MessagePattern({ cmd: 'updateDatabaseConnection' })
+  async updateDatabaseConnection(data: { database: string }) {
+    const connection = await this.databaseManagementService.getConnection(data.database);
+    await this.userService.setConnection(connection);
+    return { message: `Connection updated to database ${data.database}` };
+  }
+
+  @MessagePattern({ cmd: 'getPersonalDatabase' })
+  async getPersonalDatabase() {
+    return this.userService.getPersonalDatabase();
+  }
+
+  @MessagePattern({ cmd: 'getBusinessDatabase' })
+  async getBusinessDatabase(data: { email: string; domain: string }) {
+    return this.userService.getBusinessDatabase(data.email, data.domain);
+  }
+
+  @MessagePattern({ cmd: 'setDatabaseConnection' })
+  async setDatabaseConnection(data: { database: string }) {
+    await this.userService.setDatabaseConnection(data.database);
+    return { message: `Database connection set to ${data.database}` };
   }
 }

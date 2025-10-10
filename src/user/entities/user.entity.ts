@@ -1,6 +1,6 @@
+
 import { Role } from 'src/role/entities/role.entity';
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne } from 'typeorm';
-
 
 @Entity()
 export class User {
@@ -69,4 +69,7 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true })
   resetTokenExpires: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  database: string | null;
 }

@@ -6,7 +6,8 @@ import { User } from './entities/user.entity';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from '../auth/jwt.strategy';
-import { Role } from 'src/role/entities/role.entity';
+import { Role } from '../role/entities/role.entity';
+import { DatabaseManagementService } from './database-management.service';
 
 @Module({
   imports: [
@@ -22,7 +23,7 @@ import { Role } from 'src/role/entities/role.entity';
     }),
   ],
   controllers: [UserController],
-  providers: [UserService, JwtStrategy],
-  exports: [UserService],
+  providers: [UserService, JwtStrategy, DatabaseManagementService],
+  exports: [UserService, DatabaseManagementService],
 })
 export class UserModule {}
