@@ -4,28 +4,18 @@ import { Repository, Connection } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { Role } from '../role/entities/role.entity';
-import { DatabaseManagementService } from './database-management.service';
 
 @Injectable()
 export class UserService {
-  private currentConnection: Connection;
-
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
     @InjectRepository(Role)
     private roleRepository: Repository<Role>,
-    private readonly databaseManagementService: DatabaseManagementService,
   ) {}
 
-  async setConnection(connection: Connection) {
-    this.currentConnection = connection;
-    this.userRepository = connection.getRepository(User);
-    this.roleRepository = connection.getRepository(Role);
-  }
-
   async createUser(userData: any) {
-    const { firstName, lastName, email, password, mobileNumber, address, city, state, country, roleId, database } = userData;
+    const { firstName, lastName, email, password, mobileNumber, address, city, state, country, roleId } = userData;
 
     const existingUser = await this.userRepository.findOne({ where: [{ email }, { mobileNumber }] });
     if (existingUser) {
@@ -34,13 +24,13 @@ export class UserService {
 
     const role = await this.roleRepository.findOne({ where: { id: roleId } });
     if (!role) {
-      throw new BadRequestException(`Role with ID ${roleId} does not exist in the current database`);
+      throw new BadRequestException(`Role with ID ${roleId} does not exist in lead-crm database`);
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = this.userRepository.create({
       firstName,
-      lastName,
+      lastName: lastName || null,
       email,
       password: hashedPassword,
       mobileNumber,
@@ -49,7 +39,6 @@ export class UserService {
       state,
       country,
       role,
-      database,
     });
 
     return this.userRepository.save(user);
@@ -68,12 +57,13 @@ export class UserService {
   }
 
   async updateUser(id: string, userData: any, passwordAlreadyHashed = false) {
+    console.log(`Updating user ${id} with data: ${JSON.stringify(userData)}`);
     const user = await this.getUser(id);
 
     if (userData.roleId) {
       const role = await this.roleRepository.findOne({ where: { id: userData.roleId } });
       if (!role) {
-        throw new BadRequestException(`Role with ID ${userData.roleId} does not exist in the current database`);
+        throw new BadRequestException(`Role with ID ${userData.roleId} does not exist in lead-crm database`);
       }
       userData.role = role;
     }
@@ -82,9 +72,12 @@ export class UserService {
       userData.password = await bcrypt.hash(userData.password, 10);
     }
 
-    const { passwordAlreadyHashed: _, database, ...updateData } = userData;
+    const { passwordAlreadyHashed: _, ...updateData } = userData;
+    console.log(`Updating user ${id} with fields: ${JSON.stringify(updateData)}`);
     await this.userRepository.update(id, updateData);
-    return this.getUser(id);
+    const updatedUser = await this.getUser(id);
+    console.log(`User after update: ${JSON.stringify(updatedUser)}`);
+    return updatedUser;
   }
 
   async deleteUser(id: string) {
@@ -114,7 +107,7 @@ export class UserService {
   }
 
   async saveUser(user: any) {
-    const { firstName, lastName, email, password, mobileNumber, address, city, state, country, role, database, emailVerificationToken } = user;
+    const { firstName, lastName, email, password, mobileNumber, address, city, state, country, role, emailVerificationToken } = user;
 
     const existingUser = await this.userRepository.findOne({ where: [{ email }, { mobileNumber }] });
     if (existingUser) {
@@ -123,7 +116,7 @@ export class UserService {
 
     const roleEntity = await this.roleRepository.findOne({ where: { id: role.id } });
     if (!roleEntity) {
-      throw new BadRequestException(`Role with ID ${role.id} does not exist in database ${database}`);
+      throw new BadRequestException(`Role with ID ${role.id} does not exist in lead-crm database`);
     }
 
     const userEntity = this.userRepository.create({
@@ -137,7 +130,6 @@ export class UserService {
       state,
       country,
       role: roleEntity,
-      database,
       emailVerificationToken,
     });
 
@@ -147,7 +139,7 @@ export class UserService {
   async findRoleById(id: string) {
     const role = await this.roleRepository.findOne({ where: { id } });
     if (!role) {
-      throw new BadRequestException(`Role with ID ${id} does not exist in the current database`);
+      throw new BadRequestException(`Role with ID ${id} does not exist in lead-crm database`);
     }
     return role;
   }
@@ -155,20 +147,8 @@ export class UserService {
   async findRoleByName(name: string) {
     const role = await this.roleRepository.findOne({ where: { name } });
     if (!role) {
-      throw new BadRequestException(`Role with name ${name} does not exist in the current database`);
+      throw new BadRequestException(`Role with name ${name} does not exist in lead-crm database`);
     }
     return role;
-  }
-
-  async getPersonalDatabase(): Promise<string> {
-    return this.databaseManagementService.getPersonalDatabase();
-  }
-
-  async getBusinessDatabase(email: string, domain: string): Promise<string> {
-    return this.databaseManagementService.getBusinessDatabase(email, domain);
-  }
-
-  async setDatabaseConnection(dbName: string): Promise<void> {
-    await this.databaseManagementService.setDatabaseConnection(dbName);
   }
 }
