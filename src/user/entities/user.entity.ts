@@ -1,4 +1,3 @@
-
 import { Role } from 'src/role/entities/role.entity';
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne } from 'typeorm';
 
@@ -7,11 +6,11 @@ export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar' })
-  firstName: string;
+ @Column({ type: 'varchar' })
+  firstName: string; 
 
-  @Column({ type: 'varchar' })
-  lastName: string;
+  @Column({ type: 'varchar', nullable: true })
+  lastName: string | null;
 
   @Column({ type: 'varchar', unique: true })
   email: string;
@@ -69,7 +68,4 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true })
   resetTokenExpires: Date | null;
-
-  @Column({ type: 'varchar', nullable: true })
-  database: string | null;
 }
