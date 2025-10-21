@@ -259,6 +259,38 @@ export class DatabaseManagementService implements TypeOrmOptionsFactory {
     }
   }
 
+  async getAllDatabases(): Promise<string[]> {
+  let tempConnection: Connection | null = null;
+  try {
+    tempConnection = await createConnection({
+      type: 'postgres',
+      host: 'localhost',
+      port: 5432,
+      username: 'postgres',
+      password: 'Srikanth@03',
+      database: 'postgres',
+    });
+
+    const query = `
+      SELECT datname 
+      FROM pg_database 
+      WHERE datname LIKE 'digiwebspot%' OR datname LIKE 'business_%'
+    `;
+    const result = await tempConnection.query(query);
+    const databases = result.map((row: any) => row.datname);
+    console.log(`Found databases: ${databases}`);
+    return databases;
+  } catch (error) {
+    console.error('Error fetching databases:', error.message);
+    throw new InternalServerErrorException(`Failed to fetch databases: ${error.message}`);
+  } finally {
+    if (tempConnection) {
+      await tempConnection.close().catch(err => console.error(`Error closing temp connection: ${err.message}`));
+    }
+  }
+}
+  
+
   private async sendConnectionUpdateToMicroservice(dbName: string) {
     const client = ClientProxyFactory.create({
       transport: Transport.TCP,
