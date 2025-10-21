@@ -16,6 +16,13 @@ async function bootstrap() {
     options: { host: '0.0.0.0', port: 3005 },
   });
 
+  app.enableCors({
+  origin: ['http://localhost:3002'],
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  credentials: true,
+});
+
+
   await app.startAllMicroservices(); // Start microservice
   await app.listen(3004); // Start REST API
   console.log('REST API running on port 3004');
