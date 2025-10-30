@@ -2,8 +2,9 @@ import { Controller, Post, Body, Get, Param, Put, Delete, UseGuards } from '@nes
 import { MessagePattern } from '@nestjs/microservices';
 import { UserService } from './user.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Constants } from 'src/common/constants';
 
-@Controller('users')
+@Controller({ path: 'user', version: Constants.API_VERSION })
 export class UserController {
   constructor(private readonly userService: UserService) {}
 

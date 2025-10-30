@@ -1,14 +1,27 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Transport } from '@nestjs/microservices';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, VersioningType } from '@nestjs/common';
+import { Constants } from './common/constants';
+import { join } from 'path';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule); // REST API
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const apiVersion = Constants.API_VERSION || '1';
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
+
+  app.useStaticAssets(join(__dirname, '..', 'Uploads'), {
+    prefix: '/v1/uploads/',
+  });
+
+    app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: apiVersion,
+  });
 
   // Connect microservice (TCP)
   app.connectMicroservice({
@@ -17,7 +30,7 @@ async function bootstrap() {
   });
 
   app.enableCors({
-  origin: ['http://localhost:3002'],
+  origin: ['http://localhost:3002','http://localhost:3003'],
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   credentials: true,
 });

@@ -1,32 +1,96 @@
-import { Controller, Post, Body, Get, Param, Put, Delete, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { RoleService } from './role.service';
+import { Constants } from 'src/common/constants';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
+import { ApiResponseDto } from 'src/common/dto/response.dto';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { CreateRoleDto } from './dto/create-role.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 
-@Controller('roles')
+@ApiTags('Roles')
+@Controller({ path: 'role', version: Constants.API_VERSION })
 export class RoleController {
   constructor(private readonly roleService: RoleService) {}
 
-  @Post()
-  async createRole(@Body() roleData: { name: string }) {
-    return this.roleService.createRole(roleData);
+  @ApiOperation({ summary: 'Create a new role' })
+  @ApiResponse({
+    status: 201,
+    description: 'Role has been successfully created',
+    type: ApiResponseDto,
+  })
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Post('create')
+  async createRole(@Body() rolePayload: CreateRoleDto) {
+    return await this.roleService.createRole(rolePayload);
   }
 
-  @Get()
-  async getRoles() {
-    return this.roleService.getRoles();
+  @ApiOperation({ summary: 'Update a role' })
+  @ApiResponse({
+    status: 200,
+    description: 'Role has been successfully updated',
+    type: ApiResponseDto,
+  })
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Put('update/:id')
+  async updateRole(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updatePayload: UpdateRoleDto,
+  ) {
+    return await this.roleService.updateRole(id, updatePayload);
   }
 
-  @Get(':id')
-  async getRole(@Param('id') id: string) {
-    return this.roleService.getRole(id);
+  @ApiOperation({ summary: 'Get a role by ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns the role information',
+    type: ApiResponseDto,
+  })
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Get('read/:id')
+  async getRole(@Param('id', ParseUUIDPipe) findId: string) {
+    return await this.roleService.getRole(findId);
   }
 
-  @Put(':id')
-  async updateRole(@Param('id') id: string, @Body() roleData: { name: string }) {
-    return this.roleService.updateRole(id, roleData);
+  @ApiOperation({ summary: 'Get all roles' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns all roles',
+    type: ApiResponseDto,
+  })
+  @ApiBearerAuth('JWT-auth')
+  @Get('list')
+  async getRoleList() {
+    return await this.roleService.getRoleList();
   }
 
-  @Delete(':id')
-  async deleteRole(@Param('id') id: string) {
-    return this.roleService.deleteRole(id);
+  @ApiOperation({ summary: 'Delete a role' })
+  @ApiResponse({
+    status: 200,
+    description: 'Role has been successfully deleted',
+    type: ApiResponseDto,
+  })
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(JwtAuthGuard)
+  @Delete('delete/:id')
+  async deleteRole(@Param('id', ParseUUIDPipe) id: string) {
+    return await this.roleService.deleteRole(id);
   }
 }

@@ -57,28 +57,34 @@ export class UserService {
   }
 
   async updateUser(id: string, userData: any, passwordAlreadyHashed = false) {
-    console.log(`Updating user ${id} with data: ${JSON.stringify(userData)}`);
-    const user = await this.getUser(id);
+  console.log(`Updating user ${id} with data: ${JSON.stringify(userData)}`);
+  const user = await this.getUser(id);
 
-    if (userData.roleId) {
-      const role = await this.roleRepository.findOne({ where: { id: userData.roleId } });
-      if (!role) {
-        throw new BadRequestException(`Role with ID ${userData.roleId} does not exist in lead-crm database`);
-      }
-      userData.role = role;
+  // Only process roleId if provided and not empty
+  if (userData.roleId !== undefined) {
+    if (!userData.roleId) {
+      throw new BadRequestException('roleId cannot be empty');
     }
-
-    if (userData.password && !passwordAlreadyHashed) {
-      userData.password = await bcrypt.hash(userData.password, 10);
+    const role = await this.roleRepository.findOne({ where: { id: userData.roleId } });
+    if (!role) {
+      throw new BadRequestException(`Role with ID ${userData.roleId} does not exist`);
     }
-
-    const { passwordAlreadyHashed: _, ...updateData } = userData;
-    console.log(`Updating user ${id} with fields: ${JSON.stringify(updateData)}`);
-    await this.userRepository.update(id, updateData);
-    const updatedUser = await this.getUser(id);
-    console.log(`User after update: ${JSON.stringify(updatedUser)}`);
-    return updatedUser;
+    userData.role = role;
+    delete userData.roleId; // Prevent saving roleId directly
   }
+
+  if (userData.password && !passwordAlreadyHashed) {
+    userData.password = await bcrypt.hash(userData.password, 10);
+  }
+
+  const { passwordAlreadyHashed: _, ...cleanData } = userData;
+  console.log(`Updating with clean data: ${JSON.stringify(cleanData)}`);
+
+  await this.userRepository.update(id, cleanData);
+  const updatedUser = await this.getUser(id);
+  console.log(`User after update: ${JSON.stringify(updatedUser)}`);
+  return updatedUser;
+}
 
   async deleteUser(id: string) {
     const user = await this.getUser(id);
