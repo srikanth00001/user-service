@@ -82,4 +82,17 @@ export class UserController {
   async findRoleByName(name: string) {
     return this.userService.findRoleByName(name);
   }
+
+  @MessagePattern({ cmd: 'findBusinessUserByEmail' })
+async findBusinessUserByEmail(email: string) {
+  return this.userService.findBusinessUserByEmail(email);
+}
+
+@MessagePattern({ cmd: 'seedBusinessTenant' })
+async seedBusinessTenant(data: any) {
+  return this.userService.seedBusinessTenant(data);
+}
+
+
+
 }

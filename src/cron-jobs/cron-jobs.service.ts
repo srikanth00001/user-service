@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThanOrEqual } from 'typeorm';
 import { Subscription } from 'src/subscription/entities/subscription.entity';
 import axios from 'axios';
+import { SubscriptionStatus } from '../subscription/entities/subscription.entity';
 
 @Injectable()
 export class CronJobsService {
@@ -15,6 +16,68 @@ export class CronJobsService {
   ) {}
 
   @Cron('50 15 * * *')
+
+
+  async handleSubscriptionQueue() {
+  this.logger.log('Running subscription queue check...');
+
+  const now = new Date();
+
+  // Find users whose ACTIVE subscription has expired
+  const expiredActiveSubs = await this.subscriptionRepository.find({
+    where: {
+      status: SubscriptionStatus.ACTIVE,
+      expiry_date: LessThanOrEqual(now),
+    },
+    relations: ['user'],
+  });
+
+  for (const expiredSub of expiredActiveSubs) {
+    const userId = expiredSub.user.id;
+
+    // Mark current as EXPIRED
+    await this.subscriptionRepository.update(expiredSub.id, {
+      status: SubscriptionStatus.EXPIRED,
+      active: false,
+    });
+
+    this.logger.log(`Expired subscription ${expiredSub.id} for user ${userId}`);
+
+    // Find the next UPCOMING subscription (earliest start_date)
+    const nextSub = await this.subscriptionRepository.findOne({
+      where: {
+        user: { id: userId },
+        status: SubscriptionStatus.UPCOMING,
+      },
+      order: { start_date: 'ASC' },
+    });
+
+    if (nextSub) {
+      // Activate it!
+      await this.subscriptionRepository.update(nextSub.id, {
+        status: SubscriptionStatus.ACTIVE,
+        active: true,
+        start_date: now, // or keep original? usually reset to now
+      });
+
+      this.logger.log(`Activated upcoming subscription ${nextSub.id}`);
+
+      await this.sendWebhook('SUBSCRIPTION_ACTIVATED', {
+        subscription_id: nextSub.id,
+        user_id: userId,
+        plan_name: nextSub.plan.name,
+      });
+
+      await this.sendWebhook('SUBSCRIPTION_EXPIRED', {
+        previous_subscription_id: expiredSub.id,
+      });
+    } else {
+      await this.sendWebhook('SUBSCRIPTION_EXPIRED_NO_QUEUE', {
+        user_id: userId,
+      });
+    }
+  }
+}
   async deactivateExpiredSubscriptions() {
     try {
       console.log('Checking for expired subscriptions...');

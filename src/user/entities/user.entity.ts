@@ -68,4 +68,7 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true })
   resetTokenExpires: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  tenantKey?: string;
 }

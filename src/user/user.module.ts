@@ -7,7 +7,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { Role } from '../role/entities/role.entity';
-import { DatabaseManagementService } from './database-management.service';
+import { DatabaseManager } from 'src/common/database/database.manager';
 
 @Module({
   imports: [
@@ -23,7 +23,7 @@ import { DatabaseManagementService } from './database-management.service';
     }),
   ],
   controllers: [UserController],
-  providers: [UserService, JwtStrategy, DatabaseManagementService],
-  exports: [UserService, DatabaseManagementService],
+  providers: [UserService, JwtStrategy,DatabaseManager],
+  exports: [UserService],
 })
 export class UserModule {}

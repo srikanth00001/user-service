@@ -16,12 +16,14 @@ import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { Constants } from 'src/common/constants';
+import { RolesGuard } from 'src/common/guards/roles.guard';
+import { Roles } from 'src/common/decorators/roles.decorator';
 
 @Controller({ path: 'subscription', version: Constants.API_VERSION })
 export class SubscriptionController {
   constructor(private readonly subscriptionService: SubscriptionService) {}
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard,RolesGuard)
   @Post('create')
   async createSubscription(
     @Body() payloadSubscription: CreateSubscriptionDto,
@@ -32,7 +34,9 @@ export class SubscriptionController {
     return this.subscriptionService.create(payloadSubscription, currentUserId);
   }
 
+
   @UseGuards(JwtAuthGuard)
+  // @Roles("Admin")
   @Get('list')
   async findAllSubscriptions(@Query('user_id') userId?: string) {
     return this.subscriptionService.findAllSubscriptions(userId);

@@ -2,7 +2,7 @@ import { Injectable, InternalServerErrorException, NotFoundException } from '@ne
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Subscription } from './entities/subscription.entity';
+import { Subscription, SubscriptionStatus } from './entities/subscription.entity';
 import { Repository } from 'typeorm';
 import { Plan } from 'src/plan/entities/plan.entity';
 import { User } from 'src/user/entities/user.entity';
@@ -33,100 +33,83 @@ export class SubscriptionService {
   }
 
   async create(
-    payloadSubscription: CreateSubscriptionDto,
-    currentUserId: string,
-  ): Promise<ApiResponseDto> {
-    try {
-      console.log('Creating subscription with currentUserId:', currentUserId); // Debug log
-      const { user_id, plan_id } = payloadSubscription;
+  payloadSubscription: CreateSubscriptionDto,
+  currentUserId: string,
+): Promise<ApiResponseDto> {
+  const { user_id, plan_id } = payloadSubscription;
 
-      const user = await this.userRepository.findOne({ where: { id: user_id.toString() } });
-      if (!user) {
-        throw new NotFoundException(
-          new ApiResponseDto({ success: false, message: `User with ID ${user_id} not found` }),
-        );
-      }
+  const user = await this.userRepository.findOne({ where: { id: user_id.toString() } });
+  const plan = await this.planRepository.findOne({ where: { id: plan_id } });
 
-      const plan = await this.planRepository.findOne({ where: { id: plan_id } });
-      if (!plan) {
-        throw new NotFoundException(
-          new ApiResponseDto({ success: false, message: `Plan with ID ${plan_id} not found` }),
-        );
-      }
-
-      const subscription = this.subscriptionRepository.create({
-        ...payloadSubscription,
-        
-        user,
-        plan,
-        plan_details: {
-          id: plan.id,
-          name: plan.name,
-          description: plan.description,
-          period: plan.period,
-          amount: plan.amount,
-          offer_type: plan.offer_type,
-          reference_id: payloadSubscription.reference_id ?? null,
-          offer_value: plan.offer_value,
-          active: plan.active,
-        },
-        created_by: currentUserId,
-        updated_by: currentUserId,
-      });
-
-      console.log('Subscription before save:', subscription); // Debug log
-      const savedSubscription = await this.subscriptionRepository.save(subscription);
-      console.log('Subscription after save:', savedSubscription); // Debug log
-
-      await this.sendWebhook('SUBSCRIPTION_ACTIVATED', {
-        subscription_id: savedSubscription.id,
-        user_id: savedSubscription.user.id,
-        plan_id: savedSubscription.plan.id,
-        payment_mode: savedSubscription.payment_mode,
-        start_date: savedSubscription.start_date,
-        expiry_date: savedSubscription.expiry_date,
-      });
-
-      return new ApiResponseDto({
-        success: true,
-        message: 'Subscription created successfully',
-        data: savedSubscription,
-      });
-    } catch (error) {
-      console.error('Error creating subscription:', error.message);
-      throw new InternalServerErrorException(
-        new ApiResponseDto({
-          success: false,
-          message: `Error creating subscription: ${error.message}`,
-        }),
-      );
-    }
+  if (!user || !plan) {
+    throw new NotFoundException('User or Plan not found');
   }
+
+  // Check if user has an ACTIVE subscription
+  const activeSub = await this.subscriptionRepository.findOne({
+    where: {
+      user: { id: user_id.toString() },
+      status: SubscriptionStatus.ACTIVE,
+    },
+  });
+
+  const isFirstSubscription = !activeSub;
+
+  const newSubscription = this.subscriptionRepository.create({
+    ...payloadSubscription,
+    user,
+    plan,
+    plan_details: { ...plan },
+    created_by: currentUserId,
+    updated_by: currentUserId,
+    status: isFirstSubscription
+      ? SubscriptionStatus.ACTIVE
+      : SubscriptionStatus.UPCOMING,
+    active: isFirstSubscription, // only active if first
+  });
+
+  const saved = await this.subscriptionRepository.save(newSubscription);
+
+  // If this is the first subscription → activate immediately
+  if (isFirstSubscription) {
+    await this.sendWebhook('SUBSCRIPTION_ACTIVATED', { subscription_id: saved.id });
+  }
+
+  return new ApiResponseDto({
+    success: true,
+    message: isFirstSubscription
+      ? 'Subscription activated!'
+      : 'Subscription queued! Will activate after current one expires.',
+    data: saved,
+  });
+}
 
   async findAllSubscriptions(userId?: string): Promise<ApiResponseDto> {
-    try {
-      const query = userId
-        ? { where: { user_id: userId, active: true }, relations: ['user', 'plan'] }
-        : { relations: ['user', 'plan'] };
-      const subscriptions = await this.subscriptionRepository.find(query);
-      return new ApiResponseDto({
-        success: true,
-        message: 'Subscriptions retrieved successfully',
-        data: subscriptions,
-      });
-    } catch (error) {
-      throw new InternalServerErrorException(
-        new ApiResponseDto({
-          success: false,
-          message: `Error retrieving subscriptions: ${error.message}`,
-        }),
-      );
-    }
+  const qb = this.subscriptionRepository.createQueryBuilder('sub')
+    .leftJoinAndSelect('sub.user', 'user')
+    .leftJoinAndSelect('sub.plan', 'plan');
+
+  if (userId) {
+    qb.where('sub.user_id = :userId', { userId });
   }
+
+  qb.orderBy('sub.start_date', 'DESC');
+
+  const subscriptions = await qb.getMany();
+
+  return new ApiResponseDto({
+  success: true,
+  message: 'Subscriptions retrieved successfully',
+  data: subscriptions,
+});
+}
 
   async findById(findId: number): Promise<ApiResponseDto> {
     try {
-      const subscription = await this.subscriptionRepository.findOne({ where: { id: findId }, relations: ['user', 'plan'] });
+      const subscription = await this.subscriptionRepository.findOne({
+  where: { id: findId },
+  relations: ['user', 'plan'],
+});
       if (!subscription) {
         throw new NotFoundException(
           new ApiResponseDto({ success: false, message: `Subscription with ID ${findId} not found` }),
