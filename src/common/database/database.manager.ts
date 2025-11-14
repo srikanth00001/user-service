@@ -16,6 +16,9 @@ import { GoogleAdsLead } from 'src/lead_management/google-ads/entities/google-ad
 import { MetaLead } from 'src/lead_management/facebook/entities/facebook.entity';
 import { GoogleFormLead } from 'src/lead_management/google-form/entities/google-form.entity';
 import { ExcelLead } from 'src/lead_management/leads/entities/excel-lead.entity';
+import { Conversation } from 'src/conversation/entities/conversation.entity';
+import { Message } from 'src/message/entities/message.entity';
+import { AgentAssignment } from 'src/agent-assignment/entities/agent-assignment.entity';
 
 export interface TenantConnection {
   name: string;
@@ -44,7 +47,7 @@ export class DatabaseManager implements OnModuleInit {
     logging: false,
     entities: [Lead, Note, Temp, Campaign,BusinessUser, BusinessRole, BusinessPermission,MetaLead,ExcelLead,
   GoogleAdsLead,
-  GoogleFormLead,],
+  GoogleFormLead,Conversation,Message,AgentAssignment],
   };
 
   private masterDataSource!: DataSource;
@@ -138,6 +141,7 @@ export class DatabaseManager implements OnModuleInit {
     ExcelLead,
   GoogleAdsLead,
   GoogleFormLead,
+  Conversation,Message,AgentAssignment
   ], 
     };
 

@@ -11,7 +11,7 @@ export class GoogleAdsService {
       throw new HttpException('Missing gcl_id', HttpStatus.BAD_REQUEST);
     }
 
-    // ✅ Extract user column data
+    // Extract user column data
     const userData = payload.user_column_data || [];
     const getValue = (key: string) =>
       userData.find(
@@ -28,11 +28,11 @@ export class GoogleAdsService {
     const region = getValue('Region');
     const postalCode = getValue('Postal Code');
 
-    // ✅ Connect to correct company DB
+    // Connect to correct company DB
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const repo = dataSource.getRepository(GoogleAdsLead);
 
-    // ✅ Create lead entry
+    // Create lead entry
     const lead = repo.create({
       gclid: payload.gcl_id,
       name,

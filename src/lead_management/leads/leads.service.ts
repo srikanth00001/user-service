@@ -1,19 +1,36 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+// src/lead_management/leads/leads.service.ts
+import {
+  Injectable,
+  HttpException,
+  HttpStatus,
+  NotFoundException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { Lead } from './entities/lead.entity';
 import { Note } from './entities/note.entity';
 import { Temp } from './entities/template.entity';
 import { Campaign } from '../campaigns/entities/campaign.entity';
-import * as XLSX from 'xlsx';
-import { DatabaseManager } from '../../common/database/database.manager';
 import { MetaLead } from '../facebook/entities/facebook.entity';
 import { GoogleAdsLead } from '../google-ads/entities/google-ad.entity';
 import { GoogleFormLead } from '../google-form/entities/google-form.entity';
 import { ExcelLead } from './entities/excel-lead.entity';
+import { MessageService } from '../../message/message.service';
+import { ConversationService } from '../../conversation/conversation.service';
+import { CreateMessageDto } from '../../message/dto/create-message.dto';
+import { CreateConversationDto } from '../../conversation/dto/create-conversation.dto';
+import * as XLSX from 'xlsx';
+import { DatabaseManager } from '../../common/database/database.manager';
 
 @Injectable()
 export class LeadsService {
-  constructor(private dbManager: DatabaseManager) {}
+  constructor(
+    private dbManager: DatabaseManager,
+    private messageService: MessageService,
+    @Inject(forwardRef(() => ConversationService))
+    private conversationService: ConversationService,
+  ) {}
 
   private getRepos(dataSource: DataSource) {
     return {
@@ -24,19 +41,19 @@ export class LeadsService {
     };
   }
 
-  // ✅ Create Manual Lead (store email instead of userId)
   async create(dto: any, userId: string, email: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const repo = dataSource.getRepository(Lead);
 
-    return repo.save(repo.create({
-      ...dto,
-      source: dto.source || 'manual',
-      createdBy: email,
-    }));
+    return repo.save(
+      repo.create({
+        ...dto,
+        source: dto.source || 'manual',
+        createdBy: email,
+      }),
+    );
   }
 
-  // ✅ Fetch all manual leads (filter by email)
   async findAll(userId: string, email: string, role?: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email, role });
     const { lead: leadRepo } = this.getRepos(dataSource);
@@ -50,93 +67,84 @@ export class LeadsService {
     });
   }
 
- // leads.service.ts → getAllSources() → REPLACE THIS ENTIRE METHOD
-async getAllSources(userId: string, email: string) {
-  const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+  async getAllSources(userId: string, email: string) {
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
 
-  const [manual, meta, gads, gform, excel] = await Promise.all([
-    dataSource.getRepository(Lead).find({
-      where: [{ createdBy: email }, { createdBy: userId }],
-      relations: ['campaign'],
-    }),
-    dataSource.getRepository(MetaLead).find({
-      where: [{ createdBy: email }, { createdBy: userId }],
-      relations: ['campaign'],
-    }),
-    dataSource.getRepository(GoogleAdsLead).find({
-      where: [{ createdBy: email }, { createdBy: userId }],
-    }),
-    dataSource.getRepository(GoogleFormLead).find({
-      where: [{ createdBy: email }, { createdBy: userId }],
-    }),
-    dataSource.getRepository(ExcelLead).find({
-      where: [{ createdBy: email }, { createdBy: userId }],
-    }),
-  ]);
+    const [manual, meta, gads, gform, excel] = await Promise.all([
+      dataSource.getRepository(Lead).find({
+        where: [{ createdBy: email }, { createdBy: userId }],
+        relations: ['campaign'],
+      }),
+      dataSource.getRepository(MetaLead).find({
+        where: [{ createdBy: email }, { createdBy: userId }],
+        relations: ['campaign'],
+      }),
+      dataSource.getRepository(GoogleAdsLead).find({
+        where: [{ createdBy: email }, { createdBy: userId }],
+      }),
+      dataSource.getRepository(GoogleFormLead).find({
+        where: [{ createdBy: email }, { createdBy: userId }],
+      }),
+      dataSource.getRepository(ExcelLead).find({
+        where: [{ createdBy: email }, { createdBy: userId }],
+      }),
+    ]);
 
-  const unified: any[] = [];
+    const unified: any[] = [];
+    const makeKey = (source: string, id: number) => `${source}-${id}`;
 
-  // Helper to generate unique React key
-  const makeKey = (source: string, id: number) => `${source}-${id}`;
-
-  // Manual Leads
-  manual.forEach(l => {
-    unified.push({
-      ...l,
-      source: 'manual',
-      campaignName: l.campaign?.name || 'Manual Entry',
-      _reactKey: makeKey('manual', l.id),
+    manual.forEach((l) => {
+      unified.push({
+        ...l,
+        source: 'manual',
+        campaignName: l.campaign?.name || 'Manual Entry',
+        _reactKey: makeKey('manual', l.id),
+      });
     });
-  });
 
-  // Meta Leads
-  meta.forEach(l => {
-    unified.push({
-      ...l,
-      source: 'meta',
-      campaignName: l.campaign?.name || 'Meta Ads',
-      _reactKey: makeKey('meta', l.id),
+    meta.forEach((l) => {
+      unified.push({
+        ...l,
+        source: 'meta',
+        campaignName: l.campaign?.name || 'Meta Ads',
+        _reactKey: makeKey('meta', l.id),
+      });
     });
-  });
 
-  // Google Ads
-  gads.forEach(l => {
-    unified.push({
-      ...l,
-      source: 'google_ads',
-      campaignName: 'Google Ads',
-      _reactKey: makeKey('google_ads', l.id),
+    gads.forEach((l) => {
+      unified.push({
+        ...l,
+        source: 'google_ads',
+        campaignName: 'Google Ads',
+        _reactKey: makeKey('google_ads', l.id),
+      });
     });
-  });
 
-  // Google Form
-  gform.forEach(l => {
-    unified.push({
-      ...l,
-      source: 'google_form',
-      campaignName: 'Google Form',
-      _reactKey: makeKey('google_form', l.id),
+    gform.forEach((l) => {
+      unified.push({
+        ...l,
+        source: 'google_form',
+        campaignName: 'Google Form',
+        _reactKey: makeKey('google_form', l.id),
+      });
     });
-  });
 
-  // Excel Import
-  excel.forEach(l => {
-    unified.push({
-      ...l,
-      source: 'excel_import',
-      campaignName: 'Excel Import',
-      _reactKey: makeKey('excel', l.id),
+    excel.forEach((l) => {
+      unified.push({
+        ...l,
+        source: 'excel_import',
+        campaignName: 'Excel Import',
+        _reactKey: makeKey('excel', l.id),
+      });
     });
-  });
 
-  return {
-    success: true,
-    data: unified,
-    total: unified.length,
-  };
-}
+    return {
+      success: true,
+      data: unified,
+      total: unified.length,
+    };
+  }
 
-  // ✅ Add Note (store email)
   async addNote(leadId: number, content: string, userId: string, email: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const { lead: leadRepo, note: noteRepo } = this.getRepos(dataSource);
@@ -157,7 +165,6 @@ async getAllSources(userId: string, email: string) {
     return noteRepo.save(note);
   }
 
-  // ✅ Get Notes
   async getNotes(leadId: number, userId: string, email: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const { note: noteRepo } = this.getRepos(dataSource);
@@ -167,7 +174,6 @@ async getAllSources(userId: string, email: string) {
     });
   }
 
-  // ✅ Delete lead
   async delete(leadId: number, userId: string, email: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const { lead: leadRepo } = this.getRepos(dataSource);
@@ -183,48 +189,49 @@ async getAllSources(userId: string, email: string) {
     return leadRepo.softRemove(lead);
   }
 
- async importLeads(file: Express.Multer.File, userId: string, email: string) {
-  if (!file?.mimetype.includes('spreadsheetml') && !file?.originalname.endsWith('.xlsx')) {
-    throw new HttpException('Invalid Excel file. Please upload .xlsx', HttpStatus.BAD_REQUEST);
-  }
-
-  const workbook = XLSX.read(file.buffer, { type: 'buffer' });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const jsonData = XLSX.utils.sheet_to_json(sheet);
-
-  const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
-  const excelRepo = dataSource.getRepository(ExcelLead);
-
-  let imported = 0;
-  let skipped = 0;
-
-  for (const row of jsonData as any[]) {
-    try {
-      const lead = excelRepo.create({
-        externalLeadId: row.externalLeadId || `excel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name: row.name || row.Name || null,
-        email: row.email || row.Email || null,
-        phone: row.phone || row.Phone || row.mobile || null,
-        pageId: row.pageId || row.page_id || null,
-        rawData: row,
-        createdBy: email,
-        source: 'excel_import',
-      });
-
-      await excelRepo.save(lead);
-      imported++;
-    } catch (err) {
-      console.warn('Failed to import row:', row, err);
-      skipped++;
+  async importLeads(file: Express.Multer.File, userId: string, email: string) {
+    if (!file?.mimetype.includes('spreadsheetml') && !file?.originalname.endsWith('.xlsx')) {
+      throw new HttpException('Invalid Excel file. Please upload .xlsx', HttpStatus.BAD_REQUEST);
     }
-  }
 
-  return {
-    success: true,
-    message: `Imported ${imported} leads${skipped > 0 ? `, ${skipped} skipped` : ''}`,
-    imported,
-    skipped,
-  };}
+    const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+    const excelRepo = dataSource.getRepository(ExcelLead);
+
+    let imported = 0;
+    let skipped = 0;
+
+    for (const row of jsonData as any[]) {
+      try {
+        const lead = excelRepo.create({
+          externalLeadId: row.externalLeadId || `excel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: row.name || row.Name || null,
+          email: row.email || row.Email || null,
+          phone: row.phone || row.Phone || row.mobile || null,
+          pageId: row.pageId || row.page_id || null,
+          rawData: row,
+          createdBy: email,
+          source: 'excel_import',
+        });
+
+        await excelRepo.save(lead);
+        imported++;
+      } catch (err) {
+        console.warn('Failed to import row:', row, err);
+        skipped++;
+      }
+    }
+
+    return {
+      success: true,
+      message: `Imported ${imported} leads${skipped > 0 ? `, ${skipped} skipped` : ''}`,
+      imported,
+      skipped,
+    };
+  }
 
   async createTemplate(dto: any, userId: string, email: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
@@ -244,7 +251,6 @@ async getAllSources(userId: string, email: string) {
     return templateRepo.find();
   }
 
-  // ✅ Generate Lead Report
   async generateReport(leadId: number, userId: string, email: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const { lead: leadRepo } = this.getRepos(dataSource);
@@ -276,5 +282,44 @@ async getAllSources(userId: string, email: string) {
         createdAt: n.createdAt,
       })),
     };
+  }
+
+  async findLeadById(tenantKey: string, leadId: number, source: string) {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    return ds.getRepository(Lead).findOne({ where: { id: leadId, source } });
+  }
+
+  async findLeadByPhone(tenantKey: string, phone: string) {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    return ds.getRepository(Lead).findOne({ where: { phone } });
+  }
+
+  async handleIncomingMessage(
+    tenantKey: string,
+    lead: any,
+    content: string,
+    whatsappMessageId?: string,
+    parentMessageId?: number,
+  ) {
+    const conv = await this.conversationService.findByLead(tenantKey, lead.id, lead.source);
+    let convId = conv?.id;
+    if (!conv) {
+      const dto: CreateConversationDto = {
+        lead_id: lead.id,
+        source: lead.source,
+        phone_number: lead.phone,
+        lead_name: lead.name,
+      };
+      convId = (await this.conversationService.create(tenantKey, dto, 'system', 'system')).data.id;
+    }
+
+    const msgDto: CreateMessageDto = {
+      conversation_id: convId!,
+      content,
+      type: 'text',
+      parent_message_id: parentMessageId,
+    };
+
+    return this.messageService.create(tenantKey, msgDto, '', '', whatsappMessageId);
   }
 }

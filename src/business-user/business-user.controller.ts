@@ -15,6 +15,7 @@ import { DatabaseManager } from '../common/database/database.manager';
 import { BusinessUserService } from './business-user.service';
 import { BusinessUser } from './entities/business-user.entity';
 import { BusinessRole } from 'src/business-role/entities/business-role.entity';
+import { Repository } from 'typeorm';
 import { Constants } from '../common/constants';
 
 @Controller({ path: 'business-users', version: Constants.API_VERSION })
@@ -22,20 +23,19 @@ import { Constants } from '../common/constants';
 export class BusinessUserController {
   constructor(private readonly dbManager: DatabaseManager) {}
 
-  private async getService(tenantKey: string) {
-    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
-    return new BusinessUserService(
-      ds.getRepository(BusinessUser),
-      ds.getRepository(BusinessRole),
-    );
-  }
-
   private getUser(req: any) {
     return {
       userId: req.user?.sub,
       email: req.user?.email,
       tenantKey: req.user?.tenantKey,
     };
+  }
+
+  private async getService(tenantKey: string) {
+    const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const userRepo: Repository<BusinessUser> = dataSource.getRepository(BusinessUser);
+    const roleRepo: Repository<BusinessRole> = dataSource.getRepository(BusinessRole);
+    return new BusinessUserService(userRepo, roleRepo, this.dbManager);
   }
 
   @Post()

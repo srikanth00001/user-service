@@ -26,6 +26,10 @@ import { BusinessRoleModule } from './business-role/business-role.module';
 import { BusinessPermissionModule } from './business-permission/business-permission.module';
 import { GoogleFormModule } from './lead_management/google-form/google-form.module';
 import { BusinessMenusModule } from './business-menus/business-menus.module';
+import { ConversationModule } from './conversation/conversation.module';
+import { MessageModule } from './message/message.module';
+import { AgentAssignmentModule } from './agent-assignment/agent-assignment.module';
+import { TeamInboxModule } from './team-inbox/team-inbox.module';
 
 @Module({
   imports: [
@@ -62,7 +66,11 @@ import { BusinessMenusModule } from './business-menus/business-menus.module';
     BusinessRoleModule,
     BusinessPermissionModule,
     GoogleFormModule,
-    BusinessMenusModule
+    BusinessMenusModule,
+    ConversationModule,
+    MessageModule,
+    AgentAssignmentModule,
+    TeamInboxModule
   ],
   controllers: [AppController],
   providers: [AppService],

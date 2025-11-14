@@ -16,9 +16,6 @@ import { Constants } from '../../common/constants';
 export class GoogleAdsController {
   constructor(private readonly googleAdsService: GoogleAdsService) {}
 
-  /**
-   * Test webhook endpoint (no JWT)
-   */
   @Post('webhook/test')
   async testWebhook(@Body() payload: any, @Headers('x-webhook-key') key: string) {
     const expectedKey = 'supersecret123';
@@ -40,9 +37,7 @@ export class GoogleAdsController {
     }
   }
 
-  /**
-   * Real webhook endpoint (requires JWT)
-   */
+
   @UseGuards(JwtAuthGuard)
   @Post('webhook')
   async handleWebhook(

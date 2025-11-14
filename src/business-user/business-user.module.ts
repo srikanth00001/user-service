@@ -10,6 +10,7 @@ import { DatabaseManager } from 'src/common/database/database.manager';
   imports: [TypeOrmModule.forFeature([BusinessRole,BusinessUser])],
   controllers: [BusinessUserController],
   providers: [BusinessUserService,DatabaseManager],
+   exports: [BusinessUserService],
 })
 export class BusinessUserModule {}
 
