@@ -6,7 +6,7 @@ import * as fs from 'fs/promises';
 
 @Injectable()
 export class WhatsAppService {
-  private phoneNumberId: string = process.env.WHATSAPP_PHONE_NUMBER_ID || '848174611702595';
+  private phoneNumberId: string = '848174611702595';
   private accessToken: string = process.env.WHATSAPP_TOKEN!;
 
   private getHeaders() {

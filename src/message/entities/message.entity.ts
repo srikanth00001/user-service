@@ -15,7 +15,7 @@ export class Message {
   @Column()
   conversation_id: number;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   sender_user_id: string;
 
   @Column('text')

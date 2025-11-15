@@ -1,10 +1,13 @@
-// src/lead-assignment/dto/create-lead-assignment.dto.ts
-import { IsInt, IsString } from 'class-validator';
+// src/lead-assignment/dto/create-agent-assignment.dto.ts
+import { IsIn, IsNumber, IsUUID } from 'class-validator';
 
 export class CreateAgentAssignmentDto {
-  @IsInt()
+  @IsNumber()
   lead_id: number;
 
-  @IsString()
+  @IsIn(['manual', 'meta', 'google_ads', 'google_form', 'excel_import'])
+  source: string;
+
+  @IsUUID()
   assigned_agent_id: string;
 }

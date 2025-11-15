@@ -30,6 +30,7 @@ import { ConversationModule } from './conversation/conversation.module';
 import { MessageModule } from './message/message.module';
 import { AgentAssignmentModule } from './agent-assignment/agent-assignment.module';
 import { TeamInboxModule } from './team-inbox/team-inbox.module';
+import { WebhooksModule } from './webhooks/entities/webhooks.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { TeamInboxModule } from './team-inbox/team-inbox.module';
       username: 'postgres',
       password: 'Srikanth@03',
       database: 'lead-crm',
+      migrations: [__dirname + '/migrations/*{.ts,.js}'],
       entities: [
         User,Role, Menu,Permission, Subscription,Plan
       ],
@@ -69,6 +71,7 @@ import { TeamInboxModule } from './team-inbox/team-inbox.module';
     BusinessMenusModule,
     ConversationModule,
     MessageModule,
+    WebhooksModule,
     AgentAssignmentModule,
     TeamInboxModule
   ],

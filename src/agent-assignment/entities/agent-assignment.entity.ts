@@ -1,23 +1,23 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
-import { Lead } from 'src/lead_management/leads/entities/lead.entity';
+// src/lead-assignment/entities/agent-assignment.entity.ts
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeorm';
 
 @Entity('lead_assignments')
 export class AgentAssignment {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @ManyToOne(() => Lead)
-  @JoinColumn({ name: 'lead_id' })
-  lead: Lead;
+  @Column({ type: 'varchar', default: 'manual' })
+leadSource: string;
 
-  @Column()
-  lead_id: number;
+
+  @Column({ name: 'lead_id' })
+  leadId: number;
 
   @Column()
   assigned_agent_id: string;
 
-  @Column()
-  assigned_by: string;
+  @Column({ nullable: true })
+  assigned_by?: string;
 
   @CreateDateColumn()
   created_at: Date;

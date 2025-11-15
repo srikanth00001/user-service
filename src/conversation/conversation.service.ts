@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+// src/conversation/conversation.service.ts
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { DataSource, FindOptionsWhere } from 'typeorm';
 import { Conversation } from './entities/conversation.entity';
 import { CreateConversationDto } from './dto/create-conversation.dto';
@@ -18,9 +19,9 @@ export interface ConversationWithExtras extends Conversation {
 export class ConversationService {
   constructor(
     private dbManager: DatabaseManager,
-     @Inject(forwardRef(() => LeadsService))
+    @Inject(forwardRef(() => LeadsService))
     private leadsService: LeadsService,
-    private AgentAssignmentService: AgentAssignmentService,
+    private agentAssignmentService: AgentAssignmentService,
   ) {}
 
   private async getRepos(dataSource: DataSource) {
@@ -37,44 +38,44 @@ export class ConversationService {
   }
 
   async create(
-  tenantKey: string,
-  dto: CreateConversationDto,
-  userId: string,
-  email: string
-): Promise<{ success: boolean; data: ConversationWithExtras }> {
-  const dataSource = await this.getDataSourceForUser(userId, email);
-  const { conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
+    tenantKey: string,
+    dto: CreateConversationDto,
+    userId: string,
+    email: string
+  ): Promise<{ success: boolean; data: ConversationWithExtras }> {
+    const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const { conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
-  const lead = await this.leadsService.findLeadById(tenantKey, dto.lead_id, dto.source || 'manual');
-  if (!lead) throw new NotFoundException('Lead not found');
+    const lead = await this.leadsService.findLeadById(tenantKey, dto.lead_id, dto.source || 'manual');
+    if (!lead) throw new NotFoundException('Lead not found');
 
-  // Get assigned agent from LeadAssignment
-  const AgentAssignment = await this.AgentAssignmentService?.findByLead(tenantKey, dto.lead_id);
-  const assignedAgentId = AgentAssignment?.assigned_agent_id;
+    // Get current assignment
+    const assignment = await this.agentAssignmentService.findByLead(tenantKey, dto.lead_id, dto.source || 'manual');
+    const assignedAgentId = assignment?.assigned_agent_id;
 
-  const conv = convRepo.create({
-    ...dto,
-    phone_number: lead.phone,
-    lead_name: lead.name,
-    createdBy: email,
-    assigned_agent_id: assignedAgentId || undefined, // ← Set here
-  });
+    const conv = convRepo.create({
+      ...dto,
+      phone_number: lead.phone,
+      lead_name: lead.name,
+      createdBy: email,
+      assigned_agent_id: assignedAgentId || undefined,
+    });
 
-  const saved = await convRepo.save(conv);
+    const saved = await convRepo.save(conv);
 
-  let assignedAgent: BusinessUser | null = null;
-  if (assignedAgentId) {
-    assignedAgent = await userRepo.findOne({ where: { id: assignedAgentId } });
+    let assignedAgent: BusinessUser | null = null;
+    if (assignedAgentId) {
+      assignedAgent = await userRepo.findOne({ where: { id: assignedAgentId } });
+    }
+
+    const result: ConversationWithExtras = {
+      ...saved,
+      assignedAgent: assignedAgent || null,
+      lastMessage: null,
+    };
+
+    return { success: true, data: result };
   }
-
-  const result: ConversationWithExtras = {
-    ...saved,
-    assignedAgent: assignedAgent || null,
-    lastMessage: null,
-  };
-
-  return { success: true, data: result };
-}
 
   async findAll(tenantKey: string, userId: string, email: string) {
     const dataSource = await this.getDataSourceForUser(userId, email);
@@ -246,7 +247,6 @@ export class ConversationService {
   async findByLead(tenantKey: string, leadId: number, source: string) {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
     const { conversation: convRepo } = await this.getRepos(dataSource);
-
-    return await convRepo.findOne({ where: { lead_id: leadId, source } });
+    return convRepo.findOne({ where: { lead_id: leadId, source } });
   }
 }

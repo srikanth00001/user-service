@@ -23,7 +23,7 @@ export class TeamInboxService {
     private leadsService: LeadsService,
     private whatsAppService: WhatsAppService,
     private messageGateway: MessageGateway,
-    private AgentAssignmentService: AgentAssignmentService, // ← NEW
+    private agentAssignmentService: AgentAssignmentService,
   ) {}
 
   private async getRepos(dataSource: DataSource) {
@@ -34,66 +34,59 @@ export class TeamInboxService {
   }
 
   async processIncomingMessage(data: {
-    tenantKey: string;
-    phoneNumber: string;
-    name: string | null;
-    messageContent: string;
-    messageType: string;
-    whatsappMessageId?: string;
-    parentMessageId?: number;
-    reaction?: { messageId: number; emoji: string };
-  }) {
-    const dataSource = await this.dbManager.getOrCreateTenantConnection(data.tenantKey);
-    const { message: msgRepo } = await this.getRepos(dataSource);
+  tenantKey: string;
+  phoneNumber: string;
+  name: string | null;
+  messageContent: string;
+  messageType: string;
+  whatsappMessageId?: string;
+  parentMessageId?: number;
+  reaction?: { messageId: string; emoji: string };
+}) {
+  const dataSource = await this.dbManager.getOrCreateTenantConnection(data.tenantKey);
+  const { message: msgRepo } = await this.getRepos(dataSource);
 
-    // === Handle Reaction ===
-    if (data.reaction) {
-      const msg = await msgRepo.findOne({ where: { whatsapp_message_id: data.reaction.messageId.toString() } });
-      if (!msg) throw new NotFoundException('Message not found for reaction');
+  // === PREVENT DUPLICATES ===
+  if (data.whatsappMessageId) {
+    const exists = await msgRepo.findOne({ where: { whatsapp_message_id: data.whatsappMessageId } });
+    if (exists) {
+      this.messageGateway.emitNewMessage(exists as any, exists.conversation_id);
+      return { success: true, data: exists };
+    }
+  }
+
+  // === REACTION ===
+  if (data.reaction) {
+    const msg = await msgRepo.findOne({ where: { whatsapp_message_id: data.reaction.messageId } });
+    if (msg) {
       await msgRepo.update(msg.id, { reaction: data.reaction.emoji });
       this.messageGateway.emitMessageReacted(msg.id, data.reaction.emoji, msg.conversation_id);
-      return { success: true, data: { messageId: msg.id, reaction: data.reaction.emoji } };
+      return { success: true };
     }
-
-    // === Find Lead ===
-    const lead = await this.leadsService.findLeadByPhone(data.tenantKey, data.phoneNumber);
-    if (!lead) throw new NotFoundException('Lead not found');
-
-    // === Find or Create Conversation ===
-    let conv = await this.conversationService.findByLead(data.tenantKey, lead.id, lead.source ?? 'manual');
-    if (!conv) {
-      const dto: CreateConversationDto = {
-        lead_id: lead.id,
-        source: lead.source,
-        phone_number: data.phoneNumber,
-        lead_name: data.name || lead.name,
-      };
-      conv = (await this.conversationService.create(data.tenantKey, dto, 'system', 'system')).data;
-    }
-
-    // === Auto-sync assignment from LeadAssignment ===
-    const leadAssignment = await this.AgentAssignmentService.findByLead(data.tenantKey, lead.id);
-    if (leadAssignment && conv.assigned_agent_id !== leadAssignment.assigned_agent_id) {
-      await dataSource.getRepository(Conversation).update(conv.id, {
-        assigned_agent_id: leadAssignment.assigned_agent_id,
-      });
-      conv.assigned_agent_id = leadAssignment.assigned_agent_id;
-    }
-
-    // === Create Message ===
-    const msgDto: CreateMessageDto = {
-      conversation_id: conv.id,
-      content: data.messageContent,
-      type: data.messageType as any,
-      parent_message_id: data.parentMessageId,
-    };
-    const msg = await this.messageService.create(data.tenantKey, msgDto, 'system', 'system', data.whatsappMessageId);
-
-    // === Emit via WebSocket ===
-    this.messageGateway.emitNewMessage(msg.data, conv.id);
-
-    return { success: true, data: msg };
   }
+
+  // === REST UNCHANGED ===
+  const lead = await this.leadsService.findLeadByPhone(data.tenantKey, data.phoneNumber);
+  if (!lead) throw new NotFoundException('Lead not found');
+
+  const leadSource = lead.source ?? 'manual';
+  let conv = await this.conversationService.findByLead(data.tenantKey, lead.id, leadSource);
+  if (!conv) {
+    const dto: CreateConversationDto = { lead_id: lead.id, source: leadSource, phone_number: data.phoneNumber, lead_name: data.name || lead.name };
+    conv = (await this.conversationService.create(data.tenantKey, dto, 'system', 'system')).data;
+  }
+
+  const assignment = await this.agentAssignmentService.findByLead(data.tenantKey, lead.id, leadSource);
+  if (assignment && conv.assigned_agent_id !== assignment.assigned_agent_id) {
+    await dataSource.getRepository(Conversation).update(conv.id, { assigned_agent_id: assignment.assigned_agent_id });
+  }
+
+  const msgDto: CreateMessageDto = { conversation_id: conv.id, content: data.messageContent, type: data.messageType as any, parent_message_id: data.parentMessageId };
+  const msg = await this.messageService.create(data.tenantKey, msgDto, 'system', 'system', data.whatsappMessageId);
+
+  this.messageGateway.emitNewMessage(msg.data, conv.id);
+  return { success: true, data: msg };
+}
 
   async getConversations(tenantKey: string, userId: string, email: string) {
     const user = await this.businessUserService.findById(userId);

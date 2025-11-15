@@ -50,6 +50,7 @@ export class LeadsService {
         ...dto,
         source: dto.source || 'manual',
         createdBy: email,
+         assignedTo: null, 
       }),
     );
   }

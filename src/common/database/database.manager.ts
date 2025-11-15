@@ -44,6 +44,7 @@ export class DatabaseManager implements OnModuleInit {
     username: 'postgres',
     password: 'Srikanth@03',
     synchronize: true,
+    migrations: [__dirname + '/migrations/*{.ts,.js}'],
     logging: false,
     entities: [Lead, Note, Temp, Campaign,BusinessUser, BusinessRole, BusinessPermission,MetaLead,ExcelLead,
   GoogleAdsLead,
@@ -129,6 +130,7 @@ export class DatabaseManager implements OnModuleInit {
       ...this.baseConfig,
       name: tenantKey,
       database: dbName,
+      migrations: [__dirname + '/migrations/*{.ts,.js}'],
       entities: [
     Lead,
     Note,

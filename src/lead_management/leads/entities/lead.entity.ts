@@ -29,8 +29,11 @@ export class Lead {
   @Column({ nullable: true })
   source?: string;
 
-  @Column({ name: 'created_by', nullable: true })
-  createdBy?: string;
+  @Column({ type: 'varchar', name: 'created_by', nullable: true })
+createdBy?: string;
+
+@Column({ type: 'varchar', nullable: true })
+assignedTo: string | null;
 
   @ManyToOne(() => Campaign, { nullable: true })
   campaign?: Campaign;
