@@ -36,36 +36,57 @@ export class MessageService {
   }
 
   async create(
-    tenantKey: string,
-    dto: CreateMessageDto,
-    userId: string,
-    email: string,
-    whatsappMessageId?: string,
-  ): Promise<{ success: true; data: MessageWithSender }> {
-    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
-    const { message: msgRepo, conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
+  tenantKey: string,
+  dto: CreateMessageDto,
+  userId: string,
+  email: string,
+  whatsappMessageId?: string,
+): Promise<{ success: true; data: MessageWithSender }> {
+  console.log('=== MESSAGE CREATE START ===');
+  console.log('TenantKey:', tenantKey);
+  console.log('UserID:', userId, 'Email:', email);
+  console.log('Incoming DTO:', dto);
 
+  try {
+    // Get database connection for this tenant/user
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+    console.log('DataSource retrieved');
+
+    const { message: msgRepo, conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
+    console.log('Repositories initialized');
+
+    // Check conversation exists
     const conv = await convRepo.findOne({ where: { id: dto.conversation_id } });
+    console.log('Conversation found:', conv);
     if (!conv) throw new NotFoundException('Conversation not found');
 
+    // Check sender user exists
     if (dto.sender_user_id) {
-      const user = await userRepo.findOne({ where: { id: dto.sender_user_id } });
-      if (!user) throw new NotFoundException('Sender user not found');
+      const senderUser = await userRepo.findOne({ where: { id: dto.sender_user_id } });
+      console.log('Sender user found:', senderUser);
+      if (!senderUser) throw new NotFoundException('Sender user not found');
     }
 
+    // Check parent message exists if replying
     if (dto.parent_message_id) {
-      const parent = await msgRepo.findOne({ where: { id: dto.parent_message_id } });
-      if (!parent) throw new NotFoundException('Parent message not found');
+      const parentMsg = await msgRepo.findOne({ where: { id: dto.parent_message_id } });
+      console.log('Parent message found:', parentMsg);
+      if (!parentMsg) throw new NotFoundException('Parent message not found');
     }
 
+    // Validate view_once usage
     if (dto.view_once && dto.type && !['image', 'video'].includes(dto.type)) {
+      console.log('Invalid view_once usage');
       throw new BadRequestException('view_once only allowed for image/video');
     }
 
+    // Validate text content
     if (dto.type === 'text' && !dto.content?.trim()) {
+      console.log('Text message content empty');
       throw new BadRequestException('Text message cannot be empty');
     }
 
+    // Create message entity
     const msgEntity = msgRepo.create({
       conversation_id: dto.conversation_id,
       sender_user_id: dto.sender_user_id || userId,
@@ -75,22 +96,38 @@ export class MessageService {
       view_once: dto.view_once ?? false,
       whatsapp_message_id: whatsappMessageId ?? undefined,
     });
+    console.log('Message entity created:', msgEntity);
 
+    // Save message
     const saved = await msgRepo.save(msgEntity);
+    console.log('Message saved successfully:', saved);
+
     const savedWithSender = saved as MessageWithSender;
 
+    // Attach sender user object
     if (saved.sender_user_id) {
-      const user = await userRepo.findOne({ where: { id: saved.sender_user_id } });
-      savedWithSender.senderUser = user ?? undefined;
+      const sender = await userRepo.findOne({ where: { id: saved.sender_user_id } });
+      savedWithSender.senderUser = sender ?? undefined;
+      console.log('Attached sender user to message:', sender);
     }
 
+    // Emit event
     this.eventEmitter.emit('message.created', {
-      message: savedWithSender,
-      conversationId: dto.conversation_id,
-    });
+  message: savedWithSender,
+  conversationId: dto.conversation_id,
+  tenantKey,                         // pass tenantKey
+  phoneNumber: conv.phone_number,    // pass phone number for WhatsApp
+});
+    console.log('Event emitted: message.created');
 
+    console.log('=== MESSAGE CREATE END ===');
     return { success: true, data: savedWithSender };
+  } catch (error) {
+    console.error('ERROR in MessageService.create:', error.message, error.stack);
+    throw error;
   }
+}
+
 
   async findByConversation(
     tenantKey: string,

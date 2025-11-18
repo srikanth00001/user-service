@@ -37,6 +37,18 @@ export class ConversationService {
     return dataSource;
   }
 
+  async getTenantKey(conversationId: number): Promise<{ tenantKey: string } | null> {
+    // Loop through all tenant connections to find the conversation
+    for (const { dataSource, name: tenantKey } of this.dbManager['connections'].values()) {
+      const convRepo = dataSource.getRepository(Conversation);
+      const conv = await convRepo.findOne({ where: { id: conversationId }, select: ['id'] });
+      if (conv) {
+        return { tenantKey };
+      }
+    }
+    return null;
+  }
+
   async create(
     tenantKey: string,
     dto: CreateConversationDto,
@@ -197,6 +209,8 @@ export class ConversationService {
     return { success: true, data: counts };
   }
 
+  
+
   async search(tenantKey: string, query: string, userId: string, email: string) {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
@@ -216,6 +230,7 @@ export class ConversationService {
 
     return { success: true, data: convs };
   }
+  
 
   async advancedFilter(
     tenantKey: string,

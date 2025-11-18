@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn } from 'typeorm';
 import { Lead } from 'src/lead_management/leads/entities/lead.entity';
 
+
 @Entity('campaign')
 export class Campaign {
   @PrimaryGeneratedColumn()
@@ -9,15 +10,15 @@ export class Campaign {
   @Column()
   name: string;
 
-  @Column({ unique: true })
-  facebookCampaignId: string;
-
-  @Column()
-  pageId: string;
+  @Column({ type: 'boolean', default: true })
+  active: boolean;
 
   @Column({ type: 'varchar', nullable: true })
-  createdBy?: string | null;
+  secretKey?: string | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  createdBy: string;
+ 
   @OneToMany(() => Lead, (lead) => lead.campaign)
   leads: Lead[];
 

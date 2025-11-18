@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { Campaign } from '../../campaigns/entities/campaign.entity';
 
 @Entity('google_ads_leads')
@@ -43,6 +43,7 @@ export class GoogleAdsLead {
   creativeId?: string;
 
   @ManyToOne(() => Campaign, { nullable: true })
+  @JoinColumn({ name: 'campaign_id' }) // ensure DB column exists
   campaign?: Campaign | null;
 
   @Column({ name: 'created_by' })

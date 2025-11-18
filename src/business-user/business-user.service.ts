@@ -57,9 +57,17 @@ export class BusinessUserService {
     return this.userRepo.findOne({ where: { email }, relations: ['role'] });
   }
 
-  async findById(id: string): Promise<BusinessUser | null> {
-    return this.userRepo.findOne({ where: { id }, relations: ['role'] });
+  async findById(tenantKey: string, id: string): Promise<BusinessUser | null> {
+  // If tenantKey is provided, use tenant connection
+  if (tenantKey) {
+    const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = dataSource.getRepository(BusinessUser);
+    return repo.findOne({ where: { id }, relations: ['role'] });
   }
+  // fallback for default
+  return this.userRepo.findOne({ where: { id }, relations: ['role'] });
+}
+
 
   async getTeam(tenantKey: string) {
     return this.userRepo.find({

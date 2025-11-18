@@ -13,6 +13,7 @@ import {
 import { TeamInboxService } from 'src/team-inbox/team-inbox.service';
 import { DatabaseManager } from 'src/common/database/database.manager';
 import { Message } from 'src/message/entities/message.entity';
+import { BusinessUser } from 'src/business-user/entities/business-user.entity';
 import { extractTenantDomain } from 'src/common/tenant/tenant.utils';
 
 interface Reaction {
@@ -71,14 +72,17 @@ export class WebhookController implements OnModuleInit {
         throw new HttpException('Missing phone_number_id', HttpStatus.BAD_REQUEST);
       }
 
+      // Resolve tenantKey from master DB using BusinessUser
       const tenantKey = await this.resolveTenantKeyFromPhoneId(businessPhoneId);
+
+      // Ensure tenant connection exists
       const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
 
       for (const message of entry.messages) {
         const senderPhone = message.from;
         let messageContent = message.text?.body || 'Unknown';
         let messageType = message.type || 'text';
-        let reaction: Reaction | undefined = undefined; // ← FIXED: proper type + init
+        let reaction: Reaction | undefined;
         const whatsappMessageId = message.id;
         let parentMessageId: number | undefined;
 
@@ -88,9 +92,7 @@ export class WebhookController implements OnModuleInit {
           const parentMsg = await messageRepo.findOne({
             where: { whatsapp_message_id: message.context.id },
           });
-          if (parentMsg) {
-            parentMessageId = parentMsg.id;
-          }
+          if (parentMsg) parentMessageId = parentMsg.id;
         }
 
         // === HANDLE REACTION ===
@@ -99,7 +101,7 @@ export class WebhookController implements OnModuleInit {
             messageId: message.reaction.message_id,
             emoji: message.reaction.emoji,
           };
-          messageContent = reaction.emoji; // ← SAFE: reaction is defined
+          messageContent = reaction.emoji;
           messageType = 'reaction';
         }
 
@@ -129,6 +131,7 @@ export class WebhookController implements OnModuleInit {
           parentMessageId,
         });
 
+        // Pass to TeamInboxService
         await this.teamInboxService.processIncomingMessage({
           tenantKey,
           phoneNumber: senderPhone,
@@ -137,7 +140,7 @@ export class WebhookController implements OnModuleInit {
           messageType,
           whatsappMessageId,
           parentMessageId,
-          reaction, // ← Type-safe: Reaction | undefined
+          reaction,
         });
       }
 
@@ -151,32 +154,31 @@ export class WebhookController implements OnModuleInit {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  //  RESOLVE TENANT FROM PHONE NUMBER ID
-  // ─────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────
+  //  RESOLVE TENANT FROM PHONE NUMBER ID (MASTER DB)
+  // ───────────────────────────────────────────────
   private async resolveTenantKeyFromPhoneId(phoneNumberId: string): Promise<string> {
     const master = this.dbManager.getMasterDataSource();
 
-    // 1. Business User
     const businessUser = await master
-      .createQueryBuilder()
-      .select('bu')
-      .from('business_users', 'bu')
+      .getRepository(BusinessUser)
+      .createQueryBuilder('bu')
       .where('bu.whatsapp_business_phone_id = :id', { id: phoneNumberId })
       .getOne();
 
-    if (businessUser?.email) {
-      const domain = extractTenantDomain(businessUser.email);
-      return this.normalizeDomain(domain); // ← Use helper
+    if (!businessUser) {
+      throw new HttpException(
+        `Tenant not found for phoneNumberId: ${phoneNumberId}`,
+        HttpStatus.NOT_FOUND,
+      );
     }
 
-    // 2. Fallback: Personal User
-    return `${this.PERSONAL_DOMAIN}_1`;
+    const domain = extractTenantDomain(businessUser.email);
+
+    // Ensure tenantKey always matches database name convention
+    return this.normalizeDomain(domain);
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  //  HELPER: normalize domain (public or private-safe)
-  // ─────────────────────────────────────────────────────────────────────
   private normalizeDomain(domain: string): string {
     return domain.replace(/\./g, '_').toLowerCase();
   }

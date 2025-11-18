@@ -26,11 +26,24 @@ export class MessageController {
   constructor(private readonly messageService: MessageService) {}
 
   @Post()
-  async create(@Body() dto: CreateMessageDto, @Request() req: any) {
-    const { userId, email, tenantKey } = this.getUser(req);
+async create(@Body() dto: CreateMessageDto, @Request() req: any) {
+  console.log('REQ.USER:', req.user); // JWT payload
+  const { userId, email, tenantKey } = this.getUser(req);
+  console.log('RESOLVED USERID:', userId);
+  console.log('DTO BEFORE SENDING TO SERVICE:', dto);
+
+  try {
     dto.sender_user_id = userId;
-    return this.messageService.create(tenantKey, dto, userId, email);
+    const result = await this.messageService.create(tenantKey, dto, userId, email);
+    console.log('MESSAGE CREATED:', result);
+    return result;
+  } catch (err) {
+    console.error('ERROR CREATING MESSAGE:', err.message, err.stack);
+    throw err;
   }
+}
+
+
 
   @Get(':conversationId')
   async findByConversation(@Param('conversationId', ParseIntPipe) conversationId: number, @Request() req: any) {
@@ -120,12 +133,13 @@ export class MessageController {
     return this.messageService.upload(tenantKey, body.messageId, file, body.media_type, userId, email, viewOnce);
   }
 
-  private getUser(req: any) {
-    return {
-      userId: req.user?.sub || req.user?.id,
-      email: req.user?.email,
-      tenantKey: req.user?.tenantKey,
-      role: req.user?.role,
-    };
-  }
+ private getUser(req: any) {
+  return {
+    userId: req.user?.userId || req.user?.sub || req.user?.id,
+    email: req.user?.email,
+    tenantKey: req.user?.tenantKey,
+    role: req.user?.role,
+  };
+}
+
 }

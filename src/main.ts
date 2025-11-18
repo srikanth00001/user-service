@@ -36,6 +36,7 @@ async function bootstrap() {
 });
 
 
+
   await app.startAllMicroservices(); // Start microservice
   await app.listen(3004); // Start REST API
   console.log('REST API running on port 3004');

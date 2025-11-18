@@ -7,6 +7,7 @@ import {
 import { DatabaseManager } from '../../common/database/database.manager';
 import { Campaign } from './entities/campaign.entity';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class CampaignsService {
@@ -22,36 +23,29 @@ export class CampaignsService {
 
     const existing = await repo.findOne({
       where: {
-        facebookCampaignId: dto.facebookCampaignId,
-        pageId: dto.pageId,
+        name: dto.name,
+        createdBy: user.id,
       },
     });
 
     if (existing) {
-      throw new ConflictException(
-        `Campaign already exists: ${dto.facebookCampaignId} / ${dto.pageId}`
-      );
+      throw new ConflictException(`Campaign already exists: ${dto.name}`);
     }
 
     const campaign = repo.create({
-      ...dto,
+      name: dto.name,
+      active: dto.active ?? true,
+      secretKey: randomBytes(24).toString('hex'),
       createdBy: user.id,
     });
 
     return repo.save(campaign);
   }
 
-  async findByFacebookId(
-    pageId: string,
-    facebookCampaignId: string,
-    user: { id: string; email: string; tenantKey?: string },
-  ) {
+  async findByName(name: string, user: { id: string; email: string; tenantKey?: string }) {
     const { dataSource } = await this.dbManager.getConnectionForUser(user);
     const repo = this.getRepo(dataSource);
-
-    return repo.findOne({
-      where: { pageId, facebookCampaignId, createdBy: user.id },
-    });
+    return repo.findOne({ where: { name, createdBy: user.id } });
   }
 
   async findAll(user: { id: string; email: string; tenantKey?: string }) {
@@ -85,7 +79,8 @@ export class CampaignsService {
     const { dataSource } = await this.dbManager.getConnectionForUser(user);
     const repo = this.getRepo(dataSource);
 
-    Object.assign(campaign, dto);
+    if (dto.name) campaign.name = dto.name;
+    if (typeof dto.active === 'boolean') campaign.active = dto.active;
     return repo.save(campaign);
   }
 

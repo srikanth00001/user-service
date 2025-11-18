@@ -20,8 +20,8 @@ import { MessageModule } from 'src/message/message.module';
       secret: 'JWT_SECRET',
       signOptions: { expiresIn: '1d' },
     }),
-    forwardRef(() => ConversationModule,
-  ),forwardRef(() => MessageModule)
+    forwardRef(() => ConversationModule),
+    forwardRef(() => MessageModule),
   ],
   controllers: [LeadsController],
   providers: [LeadsService, DatabaseManager, TenantService, JwtStrategy],

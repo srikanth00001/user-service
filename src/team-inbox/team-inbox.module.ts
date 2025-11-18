@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TeamInboxService } from './team-inbox.service';
 import { TeamInboxController } from './team-inbox.controller';
 import { DatabaseManager } from 'src/common/database/database.manager';
@@ -14,14 +14,14 @@ import { AgentAssignmentService } from 'src/agent-assignment/agent-assignment.se
 @Module({
   imports: [
     ConversationModule,
-    MessageModule,
+    forwardRef(() => MessageModule), // wrap with forwardRef
     AgentAssignmentModule,
     BusinessUserModule,
-    LeadsModule,
+    forwardRef(() => LeadsModule),   // wrap with forwardRef if LeadsModule imports MessageModule
     WhatsAppModule,
   ],
   controllers: [TeamInboxController],
-  providers: [TeamInboxService,DatabaseManager,MessageGateway,AgentAssignmentService],
-  exports: [TeamInboxService]
+  providers: [TeamInboxService, DatabaseManager, MessageGateway, AgentAssignmentService],
+  exports: [TeamInboxService],
 })
 export class TeamInboxModule {}
