@@ -8,10 +8,12 @@ import { MetaLead } from './entities/facebook.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Campaign } from '../campaigns/entities/campaign.entity';
 import { DatabaseManager } from 'src/common/database/database.manager';
+import { FacebookPage } from './entities/facebook-page.entity';
+import { FacebookPageService } from './facebook-page.service';
 
 @Module({
-  imports: [HttpModule, LeadsModule, CampaignsModule, TypeOrmModule.forFeature([MetaLead,Campaign])],
+  imports: [HttpModule, LeadsModule, CampaignsModule, TypeOrmModule.forFeature([MetaLead,Campaign,FacebookPage])],
   controllers: [FacebookController],
-  providers: [FacebookService,DatabaseManager],
+  providers: [FacebookService,DatabaseManager,FacebookPageService],
 })
 export class FacebookModule {}

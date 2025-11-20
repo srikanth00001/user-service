@@ -1,84 +1,154 @@
-// src/lead_management/facebook/facebook.service.ts
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { DatabaseManager } from '../../common/database/database.manager';
 import { MetaLead } from './entities/facebook.entity';
+import { FacebookPage } from './entities/facebook-page.entity';
+import { FacebookPageService } from './facebook-page.service';
 
 @Injectable()
 export class FacebookService {
-  private readonly accessToken =
-    'EAAYxnsRjJBkBPbRww6kHqRzOSaJ0FhUpmO1Y6lN9BW34sPCHyMq6W2nvitZBdtZAlU1ah1QEgIDQUemGiOSCElwvZAYBoEDurWr5IZCPupmrxv3vUkajwOqeNYvTiKlih6VyrFD4eaCSZCrZCSJgdu1XZAgCiu1q4utxSnhNkrgN3bhNcBOZAquAOeCi69bWkfYQhnKfqynlhwZAZAQy7n4xmbfPQEcB8BntmFPnp3qRwZC0JawUgZDZD';
+  private readonly appId = '1154166966587208';
+  private readonly appSecret = '28f1aca5d36e80e64d840f0339f9eb68';
+  private readonly redirectUri =
+    'https://3f782d881672.ngrok-free.app/v1/facebook/oauth-callback';
 
   constructor(
     private readonly httpService: HttpService,
     private readonly dbManager: DatabaseManager,
+    private readonly facebookPageService: FacebookPageService,
   ) {}
 
-  async handleWebhook(payload: any, userId: string, email: string) {
+  async handleOAuthCallback(code: string, userId: string, tenantKey: string) {
     try {
-      const leadEntry = payload.entry?.[0]?.changes?.[0]?.value;
+      console.log('📌 OAuth Callback started for user:', userId);
 
-      if (!leadEntry?.leadgen_id) {
-        throw new HttpException('Missing leadgen_id', HttpStatus.BAD_REQUEST);
+      // 1️⃣ Short-lived token
+      const tokenRes = await firstValueFrom(
+        this.httpService.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+          params: {
+            client_id: this.appId,
+            client_secret: this.appSecret,
+            redirect_uri: this.redirectUri,
+            code,
+          },
+        }),
+      );
+      const userAccessToken = tokenRes.data.access_token;
+      if (!userAccessToken) throw new Error('Facebook did not return an access token');
+
+      // 2️⃣ Long-lived token
+      const longLivedRes = await firstValueFrom(
+        this.httpService.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+          params: {
+            grant_type: 'fb_exchange_token',
+            client_id: this.appId,
+            client_secret: this.appSecret,
+            fb_exchange_token: userAccessToken,
+          },
+        }),
+      );
+      const longLivedToken = longLivedRes.data.access_token;
+      if (!longLivedToken) throw new Error('Facebook did not return a long-lived access token');
+
+      // 3️⃣ Fetch pages
+      const pagesRes = await firstValueFrom(
+        this.httpService.get('https://graph.facebook.com/v19.0/me/accounts', {
+          params: { access_token: longLivedToken },
+        }),
+      );
+      const pages = pagesRes.data.data;
+
+      // 4️⃣ Save pages
+      const savedPages: FacebookPage[] = [];
+      for (const page of pages) {
+        const saved = await this.facebookPageService.saveConnectedPage({
+          tenantKey,
+          userId,
+          pageId: page.id,
+          pageName: page.name,
+          accessToken: page.access_token,
+        });
+        savedPages.push(saved);
       }
 
-      const leadgenId = leadEntry.leadgen_id;
-      const pageId = leadEntry.page_id;
-      const facebookCampaignId = leadEntry.campaign_id || leadEntry.adgroup_id;
-
-      // Fetch lead details from Facebook Graph API
-      const { data: leadData } = await firstValueFrom(
-        this.httpService.get(
-          `https://graph.facebook.com/v23.0/${leadgenId}?access_token=${this.accessToken}`,
-        ),
-      );
-
-      const { dataSource } = await this.dbManager.getConnectionForUser({
-        id: userId,
-        email,
-      });
-
-      const repo = dataSource.getRepository(MetaLead);
-
-      // Avoid duplicate leads
-      if (await repo.findOne({ where: { leadgenId } })) {
-        return { status: 'success', message: 'already_exists' };
-      }
-
-      // Format field data
-      const fieldData = (leadData.field_data || []).reduce(
-        (acc: any, f: any) => {
-          acc[f.name] = f.values?.[0] || null;
-          return acc;
-        },
-        {},
-      );
-
-      // Create & save Meta Lead
-      const metaLead = repo.create({
-        leadgenId,
-        pageId,
-        facebookCampaignId,
-        name: fieldData.full_name ?? null,
-        email: fieldData.email ?? null,
-        phone: fieldData.phone_number ?? null,
-        fieldData,
-        formId: leadData.form_id,
-        adId: leadEntry.ad_id,
-        adsetId: leadEntry.adset_id,
-        createdBy: userId,
-      });
-
-      const saved = await repo.save(metaLead);
-
-      return { status: 'success', leadgenId, id: saved.id };
-    } catch (error: any) {
-      console.error('Facebook webhook error:', error);
-      throw new HttpException(
-        error.message || 'Internal error',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      // 5️⃣ Return saved pages
+      return {
+        success: true,
+        pages: savedPages.map((p: FacebookPage) => ({
+          id: p.pageId,
+          name: p.pageName,
+          access_token: p.accessToken,
+        })),
+      };
+    } catch (err: any) {
+      console.error('❌ Full Facebook OAuth error:', err.response?.data || err.message || err);
+      throw new Error(`Facebook OAuth failed: ${JSON.stringify(err.response?.data || err.message)}`);
     }
   }
+
+  async handleWebhook(payload: any) {
+    try {
+      const entry = payload.entry?.[0]?.changes?.[0]?.value;
+      if (!entry?.leadgen_id || !entry.page_id) return { status: 'ignored' };
+
+      const pageId = entry.page_id;
+      const leadgenId = entry.leadgen_id;
+
+      const tenantKey = await this.facebookPageService.findTenantByPageId(pageId);
+      if (!tenantKey) return { status: 'tenant_not_found' };
+
+      const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+      const leadRepo = dataSource.getRepository(MetaLead);
+      const pageRepo = dataSource.getRepository(FacebookPage);
+
+      if (await leadRepo.findOne({ where: { leadgenId } })) return { status: 'duplicate' };
+
+      const page = await pageRepo.findOne({ where: { pageId, active: true } });
+      if (!page) throw new Error('Page record not found');
+
+      const { data: leadData } = await firstValueFrom(
+        this.httpService.get(`https://graph.facebook.com/v23.0/${leadgenId}?access_token=${page.accessToken}`),
+      );
+
+      const fieldData = (leadData.field_data || []).reduce((acc: any, f: any) => {
+        acc[f.name] = f.values?.[0] || null;
+        return acc;
+      }, {});
+
+      const metaLead = leadRepo.create({
+        leadgenId,
+        pageId,
+        name: fieldData.full_name,
+        email: fieldData.email,
+        phone: fieldData.phone_number,
+        fieldData,
+        formId: leadData.form_id,
+        adId: entry.ad_id,
+        createdBy: page.connectedByUserId,
+      });
+
+      await leadRepo.save(metaLead);
+
+      return { status: 'success', tenantKey };
+    } catch (err) {
+      console.error('Webhook error:', err);
+      return { status: 'error' };
+    }
+  }
+
+  async sendTestLead(pageId: string, formId: string) {
+  const page = await this.facebookPageService.getPageById(pageId);
+  if (!page) throw new Error('Page not found');
+
+  return firstValueFrom(
+    this.httpService.post(
+      `https://graph.facebook.com/v24.0/${formId}/leads`,
+      {},
+      { headers: { Authorization: `Bearer ${page.accessToken}` } },
+    ),
+  );
+}
+
+
 }
