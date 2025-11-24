@@ -11,7 +11,7 @@ export class FacebookService {
   private readonly appId = '1154166966587208';
   private readonly appSecret = '28f1aca5d36e80e64d840f0339f9eb68';
   private readonly redirectUri =
-    'https://3f782d881672.ngrok-free.app/v1/facebook/oauth-callback';
+    'https://d27febd9cd8a.ngrok-free.app/v1/facebook/oauth-callback';
 
   constructor(
     private readonly httpService: HttpService,
