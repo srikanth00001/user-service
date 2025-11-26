@@ -7,6 +7,8 @@ import {
   Req,
   Query,
   Res,
+  Delete,
+  Param,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
@@ -81,13 +83,13 @@ async oauthCallbackGet(
   }
 
   @UseGuards(JwtAuthGuard)
-  @Get('page')
-  async getConnectedPage(@Req() req: any) {
-    const userId = req.user.userId;
-    const tenantKey = req.user.tenantKey;
-    const page = await this.facebookPageService.getConnectedPage(userId, tenantKey);
-    return { success: true, data: page };
-  }
+@Get('page')
+async getConnectedPages(@Req() req: any) {
+  const userId = req.user.userId;
+  const tenantKey = req.user.tenantKey;
+  const pages = await this.facebookPageService.getConnectedPages(userId, tenantKey);
+  return { success: true, data: pages }; // Now returns array
+}
 
   @Get('webhook')
   verifyWebhook(
@@ -98,6 +100,14 @@ async oauthCallbackGet(
     if (mode === 'subscribe' && verifyToken === 'sk123') return challenge;
     return 'Invalid verify token';
   }
+
+  @UseGuards(JwtAuthGuard)
+@Delete('page/:pageId')
+async disconnectPage(@Param('pageId') pageId: string, @Req() req: any) {
+  const tenantKey = req.user.tenantKey;
+  await this.facebookPageService.disconnectPage(pageId, tenantKey);
+  return { success: true };
+}
 
   @Post('webhook')
   async webhook(@Body() payload: any) {

@@ -7,7 +7,7 @@ import * as fs from 'fs/promises';
 @Injectable()
 export class WhatsAppService {
   private phoneNumberId: string = '848174611702595';
-  private accessToken: string = 'EAAQZAtXAOD0gBP5atpZAtyKZBbZCU5BStlNrqAtXSZBECZC6msD2CWtZBGFKGRkNmeSqmUOHe2CS6fBoxYSyDVWNmTAgYrw2PsZC7qVrjNZAUtZBy8qSXCPJDZBfMYfI5ZC0ZAd4krDyx4KDZARbLNYY9DUPJvJ8809gLXIauCC1DxVBDLMpCf0SGEVlYz0s8zjpiEwtu62OfVPZAsjbAIP4yzrIoIbfLL0KEZBkMQzZA9V9XY5XDwwjFZA75hN9et0ZAKqW7rvRpsB1VB7eXusxrOgyk599G0RlIOa';
+  private accessToken: string = 'EAAQZAtXAOD0gBQAGGcBCfcynx5USxuNlJ49KZBw6ZC08HhCUAPRZBUdPa8rzbZCaSqk1ixOdww2TF4tft7s8ZBDG1TjjIugjdhW4F1XpbkZAMiUFNYFvLOSnSiswrTaPvEUEQotZCLq2rZCCbYfuESiS1CMv2hPkKoKvHSygahtHSlT5csEyqea0HjApaOvrBHf0MFxyz2ARyDNxrIzqqnLBSPMjaRdq1tCIbyTxMZAiP57eOsHGmp814jC2uLrDrH1NMpBf727kQPrCJxoBSuak5zJzwlnQZDZD';
 
   private getHeaders() {
     if (!this.accessToken) throw new Error('WhatsApp token is missing.');
