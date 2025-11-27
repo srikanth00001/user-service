@@ -1,4 +1,11 @@
-import { Injectable, BadRequestException, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
+// src/team-inbox/team-inbox.service.ts
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { DatabaseManager } from 'src/common/database/database.manager';
 import { ConversationService } from 'src/conversation/conversation.service';
 import { MessageService } from 'src/message/message.service';
@@ -9,8 +16,8 @@ import { MessageGateway } from 'src/websocket/message.gateway';
 import { CreateConversationDto } from 'src/conversation/dto/create-conversation.dto';
 import { CreateMessageDto } from 'src/message/dto/create-message.dto';
 import { DataSource } from 'typeorm';
-import { Conversation } from 'src/conversation/entities/conversation.entity';
 import axios from 'axios';
+import { Conversation } from 'src/conversation/entities/conversation.entity';
 import { AgentAssignmentService } from 'src/agent-assignment/agent-assignment.service';
 
 @Injectable()
@@ -33,9 +40,6 @@ export class TeamInboxService {
     };
   }
 
-  // ========================================================================
-  // INCOMING MESSAGE FROM WHATSAPP (WEBHOOK)
-  // ========================================================================
   async processIncomingMessage(data: {
     tenantKey: string;
     phoneNumber: string;
@@ -49,7 +53,6 @@ export class TeamInboxService {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(data.tenantKey);
     const { message: msgRepo } = await this.getRepos(dataSource);
 
-    // Prevent duplicate messages
     if (data.whatsappMessageId) {
       const exists = await msgRepo.findOne({ where: { whatsapp_message_id: data.whatsappMessageId } });
       if (exists) {
@@ -58,7 +61,6 @@ export class TeamInboxService {
       }
     }
 
-    // Handle reactions
     if (data.reaction) {
       const msg = await msgRepo.findOne({ where: { whatsapp_message_id: data.reaction.messageId } });
       if (msg) {
@@ -68,7 +70,6 @@ export class TeamInboxService {
       }
     }
 
-    // Find or create lead & conversation
     const lead = await this.leadsService.findLeadByPhone(data.tenantKey, data.phoneNumber);
     if (!lead) throw new NotFoundException('Lead not found');
 
@@ -85,15 +86,14 @@ export class TeamInboxService {
       conv = (await this.conversationService.create(data.tenantKey, dto, 'system', 'system')).data;
     }
 
-    // Update agent assignment if changed
     const assignment = await this.agentAssignmentService.findByLead(data.tenantKey, lead.id, leadSource);
     if (assignment && conv.assigned_agent_id !== assignment.assigned_agent_id) {
       await dataSource.getRepository(Conversation).update(conv.id, {
         assigned_agent_id: assignment.assigned_agent_id,
       });
+      conv.assigned_agent_id = assignment.assigned_agent_id;
     }
 
-    // Create message
     const msgDto: CreateMessageDto = {
       conversation_id: conv.id,
       content: data.messageContent,
@@ -112,9 +112,6 @@ export class TeamInboxService {
     return { success: true, data: msg };
   }
 
-  // ========================================================================
-  // GET ALL CONVERSATIONS
-  // ========================================================================
   async getConversations(tenantKey: string, userId: string, email: string) {
     const user = await this.businessUserService.findById(tenantKey, userId);
     if (!user) throw new NotFoundException('User not found');
@@ -122,89 +119,88 @@ export class TeamInboxService {
     return await this.conversationService.findAll(tenantKey, userId, email);
   }
 
-  // ========================================================================
-  // GET MESSAGES IN CONVERSATION
-  // ========================================================================
   async getMessages(tenantKey: string, conversationId: number, userId: string, email: string) {
     return await this.messageService.findByConversation(tenantKey, conversationId, userId, email);
   }
 
-  // ========================================================================
-  // SEND MESSAGE FROM AGENT
-  // ========================================================================
-  async send(tenantKey: string, dto: CreateMessageDto, userId: string, email: string) {
-    const convResult = await this.conversationService.findOne(tenantKey, dto.conversation_id, userId, email);
-    const conv = convResult.data;
-    if (!conv) throw new NotFoundException('Conversation not found');
+  // src/team-inbox/team-inbox.service.ts
+async send(tenantKey: string, dto: CreateMessageDto, userId: string, email: string) {
+  const convResult = await this.conversationService.findOne(tenantKey, dto.conversation_id, userId, email);
+  const conv = convResult.data;
+  if (!conv) throw new NotFoundException('Conversation not found');
 
-    const user = await this.businessUserService.findById(tenantKey, userId);
-    if (!user) throw new NotFoundException('User not found');
+  const user = await this.businessUserService.findById(tenantKey, userId);
+  if (!user) throw new NotFoundException('User not found');
 
-    if (user.role.name !== 'business' && conv.assigned_agent_id !== userId) {
-      throw new BadRequestException('Not authorized');
-    }
-
-    dto.sender_user_id = userId;
-    let whatsappMessageId: string | undefined;
-
-    try {
-      // Text message
-      if (dto.type?.toLowerCase() === 'text' && dto.content?.trim()) {
-        const resp = dto.parent_message_id
-          ? await this.whatsAppService.sendReplyMessage(
-              conv.phone_number,
-              dto.content,
-              (await this.messageService.findOne(tenantKey, dto.parent_message_id, userId, email)).data.whatsapp_message_id
-            )
-          : await this.whatsAppService.sendTextMessage(conv.phone_number, dto.content);
-
-        whatsappMessageId = resp?.messageId;
-      }
-      // Media message
-      else if (['image', 'video', 'document', 'audio'].includes(dto.type!) && dto.media_url) {
-        const mediaType = dto.type as 'image' | 'video' | 'document' | 'audio';
-        const response = await axios.get(dto.media_url, { responseType: 'arraybuffer' });
-        const buffer = Buffer.from(response.data);
-
-        const mediaId = await this.whatsAppService.uploadMediaBuffer(buffer, dto.filename || 'file', mediaType);
-
-        const payload: any = {
-          messaging_product: 'whatsapp',
-          to: conv.phone_number.startsWith('+') ? conv.phone_number : `+${conv.phone_number}`,
-          type: mediaType,
-        };
-        if (mediaType === 'document') payload.document = { id: mediaId, filename: dto.filename || 'file', caption: dto.content };
-        else payload[mediaType] = { id: mediaId, caption: dto.content };
-
-        if (dto.parent_message_id) {
-          const parent = (await this.messageService.findOne(tenantKey, dto.parent_message_id, userId, email)).data;
-          if (parent.whatsapp_message_id) payload.context = { message_id: parent.whatsapp_message_id };
-        }
-
-        const waResp = await axios.post(
-          `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-          payload,
-          { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } }
-        );
-
-        whatsappMessageId = waResp.data.messages?.[0]?.id;
-      }
-
-      const savedMessage = await this.messageService.create(tenantKey, dto, userId, email, whatsappMessageId);
-      return savedMessage;
-    } catch (err: any) {
-      console.error('Failed to send WhatsApp message:', err.response?.data || err.message);
-      throw new HttpException(err.message || 'Failed to send message', HttpStatus.BAD_REQUEST);
-    }
+  if (user.role.name !== 'business' && conv.assigned_agent_id !== userId) {
+    throw new BadRequestException('Not authorized');
   }
 
-  // ========================================================================
-  // ANALYTICS
-  // ========================================================================
+  dto.sender_user_id = userId;
+  let whatsappMessageId: string | undefined;
+
+  try {
+    // TEXT MESSAGE
+    if (dto.type === 'text' && dto.content?.trim()) {
+      if (dto.parent_message_id) {
+        const parent = (await this.messageService.findOne(tenantKey, dto.parent_message_id, userId, email)).data;
+        whatsappMessageId = await this.whatsAppService.sendReplyMessage(
+          conv.phone_number,
+          dto.content,
+          parent.whatsapp_message_id!,
+        );
+      } else {
+        whatsappMessageId = await this.whatsAppService.sendTextMessage(conv.phone_number, dto.content);
+      }
+    }
+
+    // MEDIA MESSAGE — ONLY SEND IF media_url EXISTS (i.e. already uploaded)
+    else if (['image', 'video', 'document', 'audio'].includes(dto.type!) && dto.media_url) {
+      // This case happens when forwarding/sharing already-uploaded media
+      // Extract media ID from URL or re-upload if needed
+      // For now, skip WhatsApp send — it was already sent during upload
+      whatsappMessageId = 'already_sent_via_upload';
+    }
+
+    // MEDIA PLACEHOLDER → DO NOT SEND TO WHATSAPP HERE
+    // The actual send happens in MessageService.upload() after file is uploaded
+    else if (['image', 'video', 'document', 'audio'].includes(dto.type!) && !dto.media_url) {
+      // This is a placeholder for file upload → do nothing
+      whatsappMessageId = undefined;
+    }
+
+    else {
+      throw new BadRequestException('Invalid message: missing content or media');
+    }
+
+    // Save message (with or without whatsapp_message_id)
+    const savedMessage = await this.messageService.create(
+      tenantKey,
+      dto,
+      userId,
+      email,
+      whatsappMessageId, // may be undefined → OK
+    );
+
+    // Only emit if not a placeholder
+    if (whatsappMessageId && whatsappMessageId !== 'already_sent_via_upload') {
+      this.messageGateway.emitNewMessage(savedMessage.data, dto.conversation_id);
+    }
+
+    return savedMessage;
+  } catch (err: any) {
+    console.error('Failed to send message:', err);
+    throw new HttpException(
+      err.response?.data?.error?.message || err.message || 'Failed to send',
+      HttpStatus.BAD_GATEWAY,
+    );
+  }
+}
+
   async getAnalytics(tenantKey: string, userId: string, email: string) {
     const user = await this.businessUserService.findById(tenantKey, userId);
     if (!user) throw new NotFoundException('User not found');
-    if (user.role.name !== 'business') throw new BadRequestException('Only business can access analytics');
+    if (user.role.name !== 'business') throw new BadRequestException('Unauthorized');
 
     const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
     const { conversation: convRepo, message: msgRepo } = await this.getRepos(dataSource);
@@ -230,16 +226,15 @@ export class TeamInboxService {
       const agentMsgs = msgs.filter((m) => m.sender_user_id);
 
       if (customerMsgs.length > 0 && agentMsgs.length > 0) {
-        const firstCustomer = customerMsgs[0];
-        const firstAgent = agentMsgs[0];
-        totalResponseTime += firstAgent.created_at.getTime() - firstCustomer.created_at.getTime();
+        const diff = agentMsgs[0].created_at.getTime() - customerMsgs[0].created_at.getTime();
+        totalResponseTime += diff;
         responded++;
       }
     }
 
     const avgResponse = responded > 0
-      ? (totalResponseTime / responded / 1000 / 60).toFixed(2) + ' minutes'
-      : '0 minutes';
+      ? (totalResponseTime / responded / 1000 / 60).toFixed(1) + ' min'
+      : 'N/A';
 
     return {
       success: true,

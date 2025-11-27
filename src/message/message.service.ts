@@ -175,61 +175,86 @@ export class MessageService {
   }
 
   async upload(
-    tenantKey: string,
-    messageId: number,
-    file: Express.Multer.File,
-    media_type: 'image' | 'video' | 'document' | 'audio' | 'application',
-    userId: string,
-    email: string,
-    view_once = false,
-  ): Promise<{ success: true; data: MessageWithSender }> {
-    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
-    const { message: msgRepo, conversation: convRepo } = await this.getRepos(dataSource);
+  tenantKey: string,
+  messageId: number,
+  file: Express.Multer.File,
+  userId: string,
+  email: string,
+  view_once = false,
+): Promise<{ success: true; data: MessageWithSender }> {
+  const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+  const { message: msgRepo, conversation: convRepo } = await this.getRepos(dataSource);
 
-    const msg = await msgRepo.findOne({ where: { id: messageId } });
-    if (!msg) throw new NotFoundException('Message not found');
+  const msg = await msgRepo.findOne({ where: { id: messageId } });
+  if (!msg) throw new NotFoundException('Message not found');
 
-    const conv = await convRepo.findOne({ where: { id: msg.conversation_id } });
-    if (!conv) throw new NotFoundException('Conversation not found');
+  const conv = await convRepo.findOne({ where: { id: msg.conversation_id } });
+  if (!conv) throw new NotFoundException('Conversation not found');
 
-    const tmpDir = path.join(process.cwd(), 'tmp');
-    const safeFileName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const filePath = path.join(tmpDir, safeFileName);
+  const tmpDir = path.join(process.cwd(), 'tmp');
+  const safeFileName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const filePath = path.join(tmpDir, safeFileName);
 
-    await fs.mkdir(tmpDir, { recursive: true });
-    await fs.writeFile(filePath, file.buffer);
+  await fs.mkdir(tmpDir, { recursive: true });
+  await fs.writeFile(filePath, file.buffer);
 
-    const whatsappMediaType = media_type === 'application' ? 'document' : media_type;
-    const mediaId = await this.whatsAppService.uploadMedia(filePath, whatsappMediaType as any);
-    const mediaUrl = await this.whatsAppService.getMediaUrl(mediaId);
+  // CRITICAL FIX: CORRECT MAPPING FROM MIME → WHATSAPP TYPE
+ const mime = file.mimetype.toLowerCase();
 
-    await msgRepo.update(messageId, {
-      media_url: mediaUrl,
-      filename: safeFileName,
-      view_once,
-      whatsapp_message_id: mediaId,
+let whatsappMediaType: 'image' | 'video' | 'document' | 'audio';
+
+if (mime.startsWith('image/')) {
+  whatsappMediaType = 'image';
+} else if (mime.startsWith('video/')) {
+  whatsappMediaType = 'video';
+} else if (mime.startsWith('audio/')) {
+  whatsappMediaType = 'audio';
+} else {
+  whatsappMediaType = 'document';
+}
+
+
+  // Upload to WhatsApp
+  const mediaId = await this.whatsAppService.uploadMedia(filePath, whatsappMediaType);
+  const mediaUrl = await this.whatsAppService.getMediaUrl(mediaId);
+
+  // Send correctly typed media
+  const whatsappMessageId = await this.whatsAppService.sendMediaMessage(
+    conv.phone_number,
+    mediaId,
+    whatsappMediaType,
+    msg.content?.trim() || undefined,
+  );
+
+  await msgRepo.update(messageId, {
+    media_url: mediaUrl,
+    filename: safeFileName,
+    view_once,
+    whatsapp_message_id: whatsappMessageId,
+  });
+
+  const updated = await msgRepo.findOne({ where: { id: messageId } });
+  if (!updated) throw new NotFoundException('Updated message not found');
+
+  const updatedWithSender: MessageWithSender = updated as MessageWithSender;
+  if (updated.sender_user_id) {
+    const user = await dataSource.getRepository(BusinessUser).findOne({
+      where: { id: updated.sender_user_id },
     });
-
-    const updated = await msgRepo.findOne({ where: { id: messageId } });
-    if (!updated) throw new NotFoundException('Updated message not found');
-
-    const updatedWithSender: MessageWithSender = updated as MessageWithSender;
-    if (updated.sender_user_id) {
-      const user = await dataSource.getRepository(BusinessUser).findOne({
-        where: { id: updated.sender_user_id },
-      });
-      updatedWithSender.senderUser = user ?? undefined;
-    }
-
-    this.eventEmitter.emit('message.created', {
-      message: updatedWithSender,
-      conversationId: updated.conversation_id,
-    });
-
-    await fs.unlink(filePath).catch(() => {});
-
-    return { success: true, data: updatedWithSender };
+    updatedWithSender.senderUser = user ?? undefined;
   }
+
+  this.eventEmitter.emit('message.created', {
+    message: updatedWithSender,
+    conversationId: updated.conversation_id,
+    tenantKey,
+    phoneNumber: conv.phone_number,
+  });
+
+  await fs.unlink(filePath).catch(() => {});
+
+  return { success: true, data: updatedWithSender };
+}
 
   async forward(
     tenantKey: string,

@@ -10,6 +10,15 @@ import { Message } from 'src/message/entities/message.entity';
 import { LeadsService } from 'src/lead_management/leads/leads.service';
 import { AgentAssignmentService } from 'src/agent-assignment/agent-assignment.service';
 
+// Extended interface for frontend needs
+export interface ConversationListItem extends Conversation {
+  last_message: string | null;
+  last_message_at: string | null;
+  unread_count: number;
+  assignedAgent?: BusinessUser | null;
+  lastMessage?: Message | null;
+}
+
 export interface ConversationWithExtras extends Conversation {
   lastMessage?: Message | null;
   assignedAgent?: BusinessUser | null;
@@ -38,13 +47,10 @@ export class ConversationService {
   }
 
   async getTenantKey(conversationId: number): Promise<{ tenantKey: string } | null> {
-    // Loop through all tenant connections to find the conversation
     for (const { dataSource, name: tenantKey } of this.dbManager['connections'].values()) {
       const convRepo = dataSource.getRepository(Conversation);
       const conv = await convRepo.findOne({ where: { id: conversationId }, select: ['id'] });
-      if (conv) {
-        return { tenantKey };
-      }
+      if (conv) return { tenantKey };
     }
     return null;
   }
@@ -53,7 +59,7 @@ export class ConversationService {
     tenantKey: string,
     dto: CreateConversationDto,
     userId: string,
-    email: string
+    email: string,
   ): Promise<{ success: boolean; data: ConversationWithExtras }> {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
     const { conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
@@ -61,7 +67,6 @@ export class ConversationService {
     const lead = await this.leadsService.findLeadById(tenantKey, dto.lead_id, dto.source || 'manual');
     if (!lead) throw new NotFoundException('Lead not found');
 
-    // Get current assignment
     const assignment = await this.agentAssignmentService.findByLead(tenantKey, dto.lead_id, dto.source || 'manual');
     const assignedAgentId = assignment?.assigned_agent_id;
 
@@ -89,25 +94,41 @@ export class ConversationService {
     return { success: true, data: result };
   }
 
-  async findAll(tenantKey: string, userId: string, email: string) {
+  async findAll(tenantKey: string, userId: string, email: string): Promise<{ success: boolean; data: ConversationListItem[] }> {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
     const convs = await convRepo.find({ order: { updated_at: 'DESC' } });
-    const enriched: ConversationWithExtras[] = [];
+    const enriched: ConversationListItem[] = [];
 
     for (const conv of convs) {
-      const enrichedConv: ConversationWithExtras = { ...conv };
-      enrichedConv.assignedAgent = conv.assigned_agent_id
-        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } }) || null
-        : null;
-
       const lastMsg = await msgRepo.findOne({
         where: { conversation_id: conv.id, deleted_for_everyone: false },
         order: { created_at: 'DESC' },
       });
-      enrichedConv.lastMessage = lastMsg || null;
-      enriched.push(enrichedConv);
+
+      const unreadCount = await msgRepo.count({
+        where: {
+          conversation_id: conv.id,
+          isRead: false,
+          // Optional: only count customer messages (if sender_user_id is null for customer)
+          // sender_user_id: IsNull()
+        },
+      });
+
+      let assignedAgent: BusinessUser | null = null;
+      if (conv.assigned_agent_id) {
+        assignedAgent = await userRepo.findOne({ where: { id: conv.assigned_agent_id } });
+      }
+
+      enriched.push({
+        ...conv,
+        last_message: lastMsg?.content?.trim() || null,
+        last_message_at: lastMsg?.created_at?.toISOString() || null,
+        unread_count: unreadCount,
+        lastMessage: lastMsg || null,
+        assignedAgent: assignedAgent || null,
+      });
     }
 
     return { success: true, data: enriched };
@@ -120,14 +141,23 @@ export class ConversationService {
     const conv = await convRepo.findOne({ where: { id } });
     if (!conv) throw new NotFoundException('Conversation not found');
 
-    conv['assignedAgent'] = conv.assigned_agent_id
-      ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } }) || null
-      : null;
+    let assignedAgent: BusinessUser | null = null;
+    if (conv.assigned_agent_id) {
+      assignedAgent = await userRepo.findOne({ where: { id: conv.assigned_agent_id } });
+    }
+
+    (conv as any).assignedAgent = assignedAgent;
 
     return { success: true, data: conv };
   }
 
-  async update(tenantKey: string, id: number, dto: UpdateConversationDto, userId: string, email: string) {
+  async update(
+    tenantKey: string,
+    id: number,
+    dto: UpdateConversationDto,
+    userId: string,
+    email: string,
+  ) {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
@@ -142,9 +172,12 @@ export class ConversationService {
     const updated = await convRepo.findOne({ where: { id } });
     if (!updated) throw new NotFoundException('Conversation not found');
 
-    updated['assignedAgent'] = updated.assigned_agent_id
-      ? await userRepo.findOne({ where: { id: updated.assigned_agent_id } }) || null
-      : null;
+    let assignedAgent: BusinessUser | null = null;
+    if (updated.assigned_agent_id) {
+      assignedAgent = await userRepo.findOne({ where: { id: updated.assigned_agent_id } });
+    }
+
+    (updated as any).assignedAgent = assignedAgent;
 
     return { success: true, data: updated };
   }
@@ -165,30 +198,47 @@ export class ConversationService {
     const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
     const convs = await convRepo.find({ where: { assigned_agent_id: agentId } });
+
     for (const conv of convs) {
-      conv['assignedAgent'] = conv.assigned_agent_id
-        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } }) || null
+      const assignedAgent: BusinessUser | null = conv.assigned_agent_id
+        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } })
         : null;
 
-      const lastMsg = await msgRepo.findOne({ where: { conversation_id: conv.id }, order: { created_at: 'DESC' } });
-      conv['lastMessage'] = lastMsg || null;
+      const lastMsg = await msgRepo.findOne({
+        where: { conversation_id: conv.id, deleted_for_everyone: false },
+        order: { created_at: 'DESC' },
+      });
+
+      (conv as any).assignedAgent = assignedAgent;
+      (conv as any).lastMessage = lastMsg || null;
     }
 
     return { success: true, data: convs };
   }
 
-  async filterByStatus(tenantKey: string, status: 'open' | 'closed' | 'pending', userId: string, email: string) {
+  async filterByStatus(
+    tenantKey: string,
+    status: 'open' | 'closed' | 'pending',
+    userId: string,
+    email: string,
+  ) {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
     const convs = await convRepo.find({ where: { status } as FindOptionsWhere<Conversation> });
+
     for (const conv of convs) {
-      conv['assignedAgent'] = conv.assigned_agent_id
-        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } }) || null
+      const assignedAgent: BusinessUser | null = conv.assigned_agent_id
+        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } })
         : null;
 
-      const lastMsg = await msgRepo.findOne({ where: { conversation_id: conv.id }, order: { created_at: 'DESC' } });
-      conv['lastMessage'] = lastMsg || null;
+      const lastMsg = await msgRepo.findOne({
+        where: { conversation_id: conv.id, deleted_for_everyone: false },
+        order: { created_at: 'DESC' },
+      });
+
+      (conv as any).assignedAgent = assignedAgent;
+      (conv as any).lastMessage = lastMsg || null;
     }
 
     return { success: true, data: convs };
@@ -201,7 +251,9 @@ export class ConversationService {
     const convs = await convRepo.find({ where: { assigned_agent_id: userId } });
     const counts = await Promise.all(
       convs.map(async (conv) => {
-        const unread = await msgRepo.count({ where: { conversation_id: conv.id, isRead: false } });
+        const unread = await msgRepo.count({
+          where: { conversation_id: conv.id, isRead: false },
+        });
         return { conversationId: conv.id, unreadCount: unread };
       }),
     );
@@ -209,34 +261,37 @@ export class ConversationService {
     return { success: true, data: counts };
   }
 
-  
-
   async search(tenantKey: string, query: string, userId: string, email: string) {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
-    const convs = await convRepo.createQueryBuilder('conv')
-      .where('conv.lead_name ILIKE :query OR conv.phone ILIKE :query', { query: `%${query}%` })
+    const convs = await convRepo
+      .createQueryBuilder('conv')
+      .where('conv.lead_name ILIKE :query OR conv.phone_number ILIKE :query', { query: `%${query}%` })
       .getMany();
 
     for (const conv of convs) {
-      conv['assignedAgent'] = conv.assigned_agent_id
-        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } }) || null
+      const assignedAgent: BusinessUser | null = conv.assigned_agent_id
+        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } })
         : null;
 
-      const lastMsg = await msgRepo.findOne({ where: { conversation_id: conv.id }, order: { created_at: 'DESC' } });
-      conv['lastMessage'] = lastMsg || null;
+      const lastMsg = await msgRepo.findOne({
+        where: { conversation_id: conv.id, deleted_for_everyone: false },
+        order: { created_at: 'DESC' },
+      });
+
+      (conv as any).assignedAgent = assignedAgent;
+      (conv as any).lastMessage = lastMsg || null;
     }
 
     return { success: true, data: convs };
   }
-  
 
   async advancedFilter(
     tenantKey: string,
     filters: { priority?: string; department?: string; topic?: string; channel?: string; sentiment?: string },
     userId: string,
-    email: string
+    email: string,
   ) {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
@@ -251,9 +306,11 @@ export class ConversationService {
     const convs = await query.getMany();
 
     for (const conv of convs) {
-      conv['assignedAgent'] = conv.assigned_agent_id
-        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } }) || null
+      const assignedAgent: BusinessUser | null = conv.assigned_agent_id
+        ? await userRepo.findOne({ where: { id: conv.assigned_agent_id } })
         : null;
+
+      (conv as any).assignedAgent = assignedAgent;
     }
 
     return { success: true, data: convs };

@@ -124,13 +124,13 @@ async create(@Body() dto: CreateMessageDto, @Request() req: any) {
   @UseInterceptors(FileInterceptor('file'))
   async upload(
     @UploadedFile() file: Express.Multer.File,
-    @Body() body: { messageId: number; media_type: 'image' | 'video' | 'document' | 'audio' | 'application'; view_once?: string },
+    @Body() body: { messageId: number; view_once?: string },
     @Request() req: any,
   ) {
     const { userId, email, tenantKey } = this.getUser(req);
     const viewOnce = body.view_once === 'true';
     if (!file) throw new HttpException('File missing', HttpStatus.BAD_REQUEST);
-    return this.messageService.upload(tenantKey, body.messageId, file, body.media_type, userId, email, viewOnce);
+    return this.messageService.upload(tenantKey, body.messageId, file, userId, email, viewOnce);
   }
 
  private getUser(req: any) {
