@@ -11,7 +11,7 @@ export class WhatsAppService {
 
   private readonly API_VERSION = 'v20.0'; // Meta auto-upgrades safely
   private readonly phoneNumberId = '848174611702595';
-  private readonly accessToken = 'EAAQZAtXAOD0gBQOvlprVMdeEDsGSvywLS6dAGmYzeWZAQK6iLqHHSuNrYmtPFpa223AoE5vVU7Od7n3RNZAjDjPdvW5IpEj3wixKP6jg9jkZCeNRmJs862wZCDSkjW08zmLsX3JihZCUUJrA1z7QEkCW9in4clK34MLw9P3TZCHJHoh8ZBuT6iTS3cb7DZBqKzQYebjzkOLeKq3quXjJZByzJamG5WQnVbC93GY0oeFGfZAI5VMfJ8TNC1zRUBSqSbG7gAOKFissMtBRUOE9gtjUIrGVnuGqAZDZD';
+  private readonly accessToken = 'EAAQZAtXAOD0gBQPqFwiI2MYZBL9UkbHfZA3Ib6gKLj1wXC8sQ4vVYVKVbFGYTIeU1rZCfhTXuGrJM7yWRTJ9dnGs1Fm0YsWZB7vwNwRvyo0mqWeEl7iCu28PyU44uokbsP8TdSZBjj9V3cNXZATlyfXDyvdgQ1ojOi1O54G9aKZCLiM07e2dna5uBflZC9dQfM6YdNNkjOhQ9LnutSLTJG6637UYD2kcErli71AUHBMplYTmGZAQDfEGXhEmkKzZBCrL3KqlCqywWajHBCHMwZAkPcFy7qCM';
 
   private get baseUrl() {
     return `https://graph.facebook.com/${this.API_VERSION}`;
@@ -120,6 +120,56 @@ export class WhatsAppService {
 
     return res.data.id;
   }
+
+  async sendReactionMessage(
+  phoneNumber: string,
+  messageId: string,
+  emoji: string,
+): Promise<string> {  // return message ID for consistency
+  try {
+    const formattedPhone = this.formatPhoneNumber(phoneNumber);
+
+    if (!messageId.startsWith('wamid.')) {
+      throw new Error(`Invalid WhatsApp message ID: ${messageId}`);
+    }
+
+    // WhatsApp only supports single emoji (no skin tones in some cases)
+    // But this regex allows all commonly supported ones
+    const validEmoji = emoji.trim();
+    if (!validEmoji || validEmoji.length > 2) {
+      throw new Error(`Invalid emoji: ${validEmoji}`);
+    }
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: formattedPhone,
+      type: 'reaction',
+      reaction: {
+        message_id: messageId,
+        emoji: validEmoji,
+      },
+    };
+
+    this.logger.log('Sending reaction to WhatsApp:', { to: formattedPhone, messageId, emoji });
+
+    // ← CRITICAL: Use the same sendPayload() as text/media messages
+    const result = await this.sendPayload(payload);
+
+    this.logger.log('Reaction sent successfully:', result);
+    return result;
+
+  } catch (error: any) {
+    this.logger.error('Failed to send reaction to WhatsApp', {
+      phoneNumber,
+      messageId,
+      emoji,
+      error: error.response?.data || error.message,
+      stack: error.stack,
+    });
+    throw error;
+  }
+}
 
   async getMediaUrl(mediaId: string): Promise<string> {
     const res = await axios.get(`${this.baseUrl}/${mediaId}`, {

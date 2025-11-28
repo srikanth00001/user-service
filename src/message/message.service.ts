@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Logger
 } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -21,6 +22,8 @@ import { MessageWithSender } from './types/message-with-sender.interface';
 
 @Injectable()
 export class MessageService {
+
+  private readonly logger = new Logger(MessageService.name);
   constructor(
     private readonly dbManager: DatabaseManager,
     private readonly whatsAppService: WhatsAppService,
@@ -35,98 +38,122 @@ export class MessageService {
     };
   }
 
-  async create(
-  tenantKey: string,
-  dto: CreateMessageDto,
-  userId: string,
-  email: string,
-  whatsappMessageId?: string,
-): Promise<{ success: true; data: MessageWithSender }> {
-  console.log('=== MESSAGE CREATE START ===');
-  console.log('TenantKey:', tenantKey);
-  console.log('UserID:', userId, 'Email:', email);
-  console.log('Incoming DTO:', dto);
+async create(
+    tenantKey: string,
+    dto: CreateMessageDto,
+    userId: string,
+    email: string,
+    whatsappMessageId?: string,
+  ): Promise<{ success: true; data: MessageWithSender }> {
+    this.logger.log('=== MESSAGE CREATE START ===');
+    this.logger.log(`User: ${userId} | DTO:`, dto);
 
-  try {
-    // Get database connection for this tenant/user
-    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
-    console.log('DataSource retrieved');
+    try {
+      const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+      const { message: msgRepo, conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
-    const { message: msgRepo, conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
-    console.log('Repositories initialized');
+      // 1. Validate conversation
+      const conv = await convRepo.findOne({ where: { id: dto.conversation_id } });
+      if (!conv) throw new NotFoundException('Conversation not found');
 
-    // Check conversation exists
-    const conv = await convRepo.findOne({ where: { id: dto.conversation_id } });
-    console.log('Conversation found:', conv);
-    if (!conv) throw new NotFoundException('Conversation not found');
+      // 2. Get parent WhatsApp message ID (for replies)
+      let parentWhatsAppMessageId: string | undefined;
+      if (dto.parent_message_id) {
+        const parentMsg = await msgRepo.findOne({
+          where: { id: dto.parent_message_id },
+          select: ['id', 'whatsapp_message_id'],
+        });
+        if (!parentMsg) throw new NotFoundException('Parent message not found');
+        parentWhatsAppMessageId = parentMsg.whatsapp_message_id || undefined;
+      }
 
-    // Check sender user exists
-    if (dto.sender_user_id) {
-      const senderUser = await userRepo.findOne({ where: { id: dto.sender_user_id } });
-      console.log('Sender user found:', senderUser);
-      if (!senderUser) throw new NotFoundException('Sender user not found');
+      // 3. Validate sender
+      const senderUserId = dto.sender_user_id || userId;
+      if (senderUserId) {
+        const sender = await userRepo.findOne({ where: { id: senderUserId } });
+        if (!sender) throw new NotFoundException('Sender user not found');
+      }
+
+      // 4. Input validation
+      if (dto.view_once && dto.type && !['image', 'video'].includes(dto.type)) {
+        throw new BadRequestException('view_once only allowed for image/video');
+      }
+      if (dto.type === 'text' && !dto.content?.trim()) {
+        throw new BadRequestException('Text message cannot be empty');
+      }
+
+      // 5. Create & save message
+      const msgEntity = msgRepo.create({
+        conversation_id: dto.conversation_id,
+        sender_user_id: senderUserId,
+        content: dto.content || '',
+        type: dto.type || 'text',
+        parent_message_id: dto.parent_message_id,
+        view_once: dto.view_once ?? false,
+        whatsapp_message_id: whatsappMessageId ?? undefined,
+      });
+
+      const saved = await msgRepo.save(msgEntity);
+      this.logger.log(`Message saved to DB: ${saved.id}`);
+
+      // 6. Attach sender info
+      const savedWithSender = saved as MessageWithSender;
+      if (saved.sender_user_id) {
+        const sender = await userRepo.findOne({ where: { id: saved.sender_user_id } });
+        savedWithSender.senderUser = sender ?? undefined;
+      }
+
+      // 7. SEND TO WHATSAPP (only outgoing agent messages)
+      if (senderUserId && dto.type === 'text' && dto.content?.trim()) {
+        let sentWhatsappId: string | undefined;
+
+        try {
+          if (parentWhatsAppMessageId) {
+            this.logger.log(`Sending REPLY to WhatsApp message ID: ${parentWhatsAppMessageId}`);
+            sentWhatsappId = await this.whatsAppService.sendReplyMessage(
+              conv.phone_number,
+              dto.content.trim(),
+              parentWhatsAppMessageId
+            );
+          } else {
+            sentWhatsappId = await this.whatsAppService.sendTextMessage(
+              conv.phone_number,
+              dto.content.trim()
+            );
+          }
+
+          // Save WhatsApp message ID for future replies
+          if (sentWhatsappId && sentWhatsappId !== 'sent') {
+            await msgRepo.update(saved.id, { whatsapp_message_id: sentWhatsappId });
+            savedWithSender.whatsapp_message_id = sentWhatsappId;
+            this.logger.log(`WhatsApp message ID saved: ${sentWhatsappId}`);
+          }
+        } catch (waError: any) {
+          this.logger.error('Failed to send message to WhatsApp', {
+            error: waError.message,
+            phone: conv.phone_number,
+            content: dto.content,
+            replyTo: parentWhatsAppMessageId,
+          });
+          // Don't fail the whole operation
+        }
+      }
+
+      // 8. Emit event
+      this.eventEmitter.emit('message.created', {
+        message: savedWithSender,
+        conversationId: dto.conversation_id,
+        tenantKey,
+        phoneNumber: conv.phone_number,
+      });
+
+      this.logger.log('=== MESSAGE CREATE SUCCESS ===');
+      return { success: true, data: savedWithSender };
+    } catch (error) {
+      this.logger.error('Message creation failed', error.stack);
+      throw error;
     }
-
-    // Check parent message exists if replying
-    if (dto.parent_message_id) {
-      const parentMsg = await msgRepo.findOne({ where: { id: dto.parent_message_id } });
-      console.log('Parent message found:', parentMsg);
-      if (!parentMsg) throw new NotFoundException('Parent message not found');
-    }
-
-    // Validate view_once usage
-    if (dto.view_once && dto.type && !['image', 'video'].includes(dto.type)) {
-      console.log('Invalid view_once usage');
-      throw new BadRequestException('view_once only allowed for image/video');
-    }
-
-    // Validate text content
-    if (dto.type === 'text' && !dto.content?.trim()) {
-      console.log('Text message content empty');
-      throw new BadRequestException('Text message cannot be empty');
-    }
-
-    // Create message entity
-    const msgEntity = msgRepo.create({
-      conversation_id: dto.conversation_id,
-      sender_user_id: dto.sender_user_id || userId,
-      content: dto.content,
-      type: dto.type,
-      parent_message_id: dto.parent_message_id,
-      view_once: dto.view_once ?? false,
-      whatsapp_message_id: whatsappMessageId ?? undefined,
-    });
-    console.log('Message entity created:', msgEntity);
-
-    // Save message
-    const saved = await msgRepo.save(msgEntity);
-    console.log('Message saved successfully:', saved);
-
-    const savedWithSender = saved as MessageWithSender;
-
-    // Attach sender user object
-    if (saved.sender_user_id) {
-      const sender = await userRepo.findOne({ where: { id: saved.sender_user_id } });
-      savedWithSender.senderUser = sender ?? undefined;
-      console.log('Attached sender user to message:', sender);
-    }
-
-    // Emit event
-    this.eventEmitter.emit('message.created', {
-  message: savedWithSender,
-  conversationId: dto.conversation_id,
-  tenantKey,                         // pass tenantKey
-  phoneNumber: conv.phone_number,    // pass phone number for WhatsApp
-});
-    console.log('Event emitted: message.created');
-
-    console.log('=== MESSAGE CREATE END ===');
-    return { success: true, data: savedWithSender };
-  } catch (error) {
-    console.error('ERROR in MessageService.create:', error.message, error.stack);
-    throw error;
   }
-}
 
 
   async findByConversation(
@@ -299,39 +326,65 @@ if (mime.startsWith('image/')) {
   }
 
   async react(
-    tenantKey: string,
-    messageId: number,
-    emoji: string,
-    userId: string,
-    email: string,
-  ): Promise<{ success: true; data: MessageWithSender }> {
-    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
-    const { message: msgRepo } = await this.getRepos(dataSource);
+  tenantKey: string,
+  messageId: number,
+  emoji: string,
+  userId: string,
+  email: string,
+): Promise<{ success: true; data: MessageWithSender }> {
+  const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+  const { message: msgRepo } = await this.getRepos(dataSource);
 
-    const msg = await msgRepo.findOne({ where: { id: messageId } });
-    if (!msg) throw new NotFoundException('Message not found');
+  const msg = await msgRepo.findOne({
+    where: { id: messageId },
+    relations: ['conversation'],
+  });
+  if (!msg) throw new NotFoundException('Message not found');
 
-    await msgRepo.update(messageId, { reaction: emoji });
+  let waReactionSent = false;
 
-    const updated = await msgRepo.findOne({ where: { id: messageId } });
-    if (!updated) throw new NotFoundException('Updated message not found');
+  if (msg.whatsapp_message_id) {
+    // Block reactions to messages older than 3 days (safe limit)
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-    const updatedWithSender: MessageWithSender = updated as MessageWithSender;
-    if (updated.sender_user_id) {
-      const user = await dataSource.getRepository(BusinessUser).findOne({
-        where: { id: updated.sender_user_id },
-      });
-      updatedWithSender.senderUser = user ?? undefined;
+    if (msg.created_at >= threeDaysAgo) {
+      try {
+        await this.whatsAppService.sendReactionMessage(
+          msg.conversation.phone_number,
+          msg.whatsapp_message_id,
+          emoji,
+        );
+        waReactionSent = true;
+        this.logger.log(`Reaction ${emoji} sent to WhatsApp (message ${messageId})`);
+      } catch (error: any) {
+        // Only log real errors (not 131000)
+        if (error.response?.data?.error?.code !== 131000) {
+          this.logger.error('Failed to send reaction', error.response?.data || error.message);
+        }
+        // Don't throw — still save locally
+      }
+    } else {
+      this.logger.verbose('Reaction blocked: message too old (>3 days)');
     }
-
-    this.eventEmitter.emit('message.reacted', {
-      messageId,
-      emoji,
-      conversationId: msg.conversation_id,
-    });
-
-    return { success: true, data: updatedWithSender };
   }
+
+  // Always save locally (for your team inbox)
+  await msgRepo.update(messageId, { reaction: emoji });
+
+  const updated = await msgRepo.findOne({ where: { id: messageId }, relations: ['conversation'] });
+  const updatedWithSender = updated as MessageWithSender;
+  // ... attach sender etc.
+
+  this.eventEmitter.emit('message.reacted', {
+    messageId,
+    emoji,
+    conversationId: msg.conversation_id,
+    sentToWhatsApp: waReactionSent,
+  });
+
+  return { success: true, data: updatedWithSender };
+}
 
   async deleteForMe(
     tenantKey: string,
@@ -427,7 +480,8 @@ if (mime.startsWith('image/')) {
     if (!msg) throw new NotFoundException('Message not found');
     msg.labels = [...new Set([...(msg.labels || []), label])];
     await msgRepo.save(msg);
-    return { success: true };
+const updated = await msgRepo.findOne({ where: { id: messageId } });
+return { success: true, data: updated as MessageWithSender };
   }
 
   async removeLabel(tenantKey: string, messageId: number, label: string, userId: string, email: string) {
