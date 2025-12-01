@@ -10,8 +10,8 @@ export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
 
   private readonly API_VERSION = 'v20.0'; // Meta auto-upgrades safely
-  private readonly phoneNumberId = '848174611702595';
-  private readonly accessToken = 'EAAQZAtXAOD0gBQPqFwiI2MYZBL9UkbHfZA3Ib6gKLj1wXC8sQ4vVYVKVbFGYTIeU1rZCfhTXuGrJM7yWRTJ9dnGs1Fm0YsWZB7vwNwRvyo0mqWeEl7iCu28PyU44uokbsP8TdSZBjj9V3cNXZATlyfXDyvdgQ1ojOi1O54G9aKZCLiM07e2dna5uBflZC9dQfM6YdNNkjOhQ9LnutSLTJG6637UYD2kcErli71AUHBMplYTmGZAQDfEGXhEmkKzZBCrL3KqlCqywWajHBCHMwZAkPcFy7qCM';
+  private readonly phoneNumberId = '913944838464584';
+  private readonly accessToken = 'EAAQZAtXAOD0gBQOyP0nRcrXfh1XEn4WAQibyxhYEAyLbjdStC758siAghjKI4lLQj9PJZBU8W1nl8z7BM54Jrp95LaDVUWPHwk3ZByC68GUKvQpZCHByQSu96ViB2ZCQKW5iZAlvPTa24VZBna4SKfVZAEkDmtz72R4tBQox0wfKZC1mkF5yx06tQpRNcZB8UZBfqP2RW2HYAuICcrRnqyVQyLbPTNKflta0LEn6WHhiNmEF9ZBAo0d6xxDLZB8dJpHhJB16ZAKf9hOBBmZBAUhrwQ6JEjwMxZAF0QZDZD';
 
   private get baseUrl() {
     return `https://graph.facebook.com/${this.API_VERSION}`;
