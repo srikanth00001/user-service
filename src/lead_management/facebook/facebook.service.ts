@@ -5,13 +5,12 @@ import { DatabaseManager } from '../../common/database/database.manager';
 import { MetaLead } from './entities/facebook.entity';
 import { FacebookPage } from './entities/facebook-page.entity';
 import { FacebookPageService } from './facebook-page.service';
+import { MetaApp } from './entities/meta-app.entity';
+import { Repository } from 'typeorm';
+import { MetaConnection } from './entities/meta-connection.entity';
 
 @Injectable()
 export class FacebookService {
-  private readonly appId = '1154166966587208';
-  private readonly appSecret = '28f1aca5d36e80e64d840f0339f9eb68';
-  private readonly redirectUri =
-    'https://db92ec98e61a.ngrok-free.app/v1/facebook/oauth-callback';
 
   constructor(
     private readonly httpService: HttpService,
@@ -19,35 +18,98 @@ export class FacebookService {
     private readonly facebookPageService: FacebookPageService,
   ) {}
 
+  async getMetaApp(tenantKey: string): Promise<MetaApp> {
+  const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+  const repo = dataSource.getRepository(MetaApp);
+  const config = await repo.findOne({ where: { tenantKey, active: true } });
+  if (!config) throw new Error('Meta App not configured for this tenant');
+  return config;
+}
+
+async generateSystemUserToken(appId: string, appSecret: string): Promise<string> {
+    const res = await firstValueFrom(
+      this.httpService.post(`https://graph.facebook.com/v20.0/${appId}/access_tokens`, null, {
+        params: {
+          grant_type: 'client_credentials',
+          client_id: appId,
+          client_secret: appSecret,
+        },
+      }),
+    );
+    return res.data.access_token;
+  }
+
+
+  async saveWhatsAppConnection(
+    tenantKey: string,
+    userId: string,
+    data: {
+      phoneNumberId: string;
+      displayPhoneNumber: string;
+      wabaId: string;
+      pageId: string;
+      pageName: string;
+    },
+  ) {
+    const metaApp = await this.getMetaApp(tenantKey);
+    const systemUserToken = await this.generateSystemUserToken(metaApp.appId, metaApp.appSecret);
+
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+
+    let connection = await repo.findOne({ where: { phoneNumberId: data.phoneNumberId } });
+
+    if (!connection) {
+      connection = repo.create({
+        tenantKey,
+        connectedByUserId: userId,
+        businessManagerId: '',
+        wabaId: data.wabaId,
+        phoneNumberId: data.phoneNumberId,
+        phoneNumber: data.displayPhoneNumber.replace(/[^0-9]/g, ''),
+        displayPhoneNumber: data.displayPhoneNumber,
+        accessToken: systemUserToken,
+        verified: true,
+        active: true,
+      });
+    } else {
+      connection.active = true;
+      connection.accessToken = systemUserToken;
+    }
+
+    await repo.save(connection);
+    return connection;
+  }
+
   async handleOAuthCallback(code: string, userId: string, tenantKey: string) {
     try {
       console.log('📌 OAuth Callback started for user:', userId);
+      const metaApp = await this.getMetaApp(tenantKey);
 
       // 1️⃣ Short-lived token
       const tokenRes = await firstValueFrom(
-        this.httpService.get('https://graph.facebook.com/v19.0/oauth/access_token', {
-          params: {
-            client_id: this.appId,
-            client_secret: this.appSecret,
-            redirect_uri: this.redirectUri,
-            code,
-          },
-        }),
+    this.httpService.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+      params: {
+        client_id: metaApp.appId,
+        client_secret: metaApp.appSecret,
+        redirect_uri: metaApp.redirectUri,
+        code,
+      },
+    }),
       );
       const userAccessToken = tokenRes.data.access_token;
       if (!userAccessToken) throw new Error('Facebook did not return an access token');
 
-      // 2️⃣ Long-lived token
       const longLivedRes = await firstValueFrom(
-        this.httpService.get('https://graph.facebook.com/v19.0/oauth/access_token', {
-          params: {
-            grant_type: 'fb_exchange_token',
-            client_id: this.appId,
-            client_secret: this.appSecret,
-            fb_exchange_token: userAccessToken,
-          },
-        }),
-      );
+  this.httpService.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+    params: {
+      grant_type: 'fb_exchange_token',
+      client_id: metaApp.appId,
+      client_secret: metaApp.appSecret,
+      fb_exchange_token: userAccessToken,
+    },
+  }),
+);
       const longLivedToken = longLivedRes.data.access_token;
       if (!longLivedToken) throw new Error('Facebook did not return a long-lived access token');
 
@@ -86,6 +148,145 @@ export class FacebookService {
       throw new Error(`Facebook OAuth failed: ${JSON.stringify(err.response?.data || err.message)}`);
     }
   }
+
+
+  async handleWhatsAppOAuthCallback(code: string, userId: string, tenantKey: string) {
+  const metaApp = await this.getMetaApp(tenantKey);
+
+  // Step 1: Get short-lived token
+  const tokenRes = await firstValueFrom(
+    this.httpService.get('https://graph.facebook.com/v20.0/oauth/access_token', {
+      params: {
+        client_id: metaApp.appId,
+        client_secret: metaApp.appSecret,
+        redirect_uri: metaApp.redirectUri,
+        code,
+      },
+    })
+  );
+
+  const userToken = tokenRes.data.access_token;
+
+  // Step 2: Exchange for long-lived token
+  const longLived = await firstValueFrom(
+    this.httpService.get('https://graph.facebook.com/v20.0/oauth/access_token', {
+      params: {
+        grant_type: 'fb_exchange_token',
+        client_id: metaApp.appId,
+        client_secret: metaApp.appSecret,
+        fb_exchange_token: userToken,
+      },
+    })
+  );
+
+  const longLivedToken = longLived.data.access_token;
+
+  // Step 3: Get WhatsApp Business Accounts
+  const accountsRes = await firstValueFrom(
+    this.httpService.get('https://graph.facebook.com/v20.0/me', {
+      params: {
+        fields: 'accounts{whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}}',
+        access_token: longLivedToken,
+      },
+    })
+  );
+
+  const pages = accountsRes.data.accounts?.data || [];
+  const availableNumbers: any[] = [];
+
+  for (const page of pages) {
+    const wabas = page.whatsapp_business_accounts?.data || [];
+    for (const waba of wabas) {
+      const phones = waba.phone_numbers?.data || [];
+      for (const phone of phones) {
+        availableNumbers.push({
+  id: phone.id,                    // ← keep 'id' for backward compat
+  phoneNumberId: phone.id,         // ← add this
+  display_phone_number: phone.display_phone_number,
+  displayPhoneNumber: phone.display_phone_number,  // ← add camelCase
+  verified_name: phone.verified_name || phone.display_phone_number,
+  verifiedName: phone.verified_name || phone.display_phone_number, // ← add
+  pageId: page.id,
+  pageName: page.name,
+  wabaId: waba.id,
+  page_name: page.name,            // ← optional fallback
+});
+      }
+    }
+  }
+
+  // Step 4: Generate Permanent System User Token (Never expires!)
+  const systemTokenRes = await firstValueFrom(
+    this.httpService.post(`https://graph.facebook.com/v20.0/${metaApp.appId}/access_tokens`, null, {
+      params: {
+        grant_type: 'client_credentials',
+        client_id: metaApp.appId,
+        client_secret: metaApp.appSecret,
+      },
+    })
+  );
+
+  const systemUserToken = systemTokenRes.data.access_token;
+
+  return {
+    success: true,
+    availableNumbers,
+    systemUserToken, // Save this per tenant or globally
+  };
+}
+
+  // src/lead_management/facebook/facebook.service.ts
+
+async saveMetaAppConfig(tenantKey: string, data: { appId: string; appSecret: string; redirectUri: string }) {
+  const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+  const repo = ds.getRepository(MetaApp);
+
+  let config = await repo.findOne({ where: { tenantKey } });
+
+  if (config) {
+    config.appId = data.appId.trim();
+    config.appSecret = data.appSecret.trim();
+    config.redirectUri = data.redirectUri.trim();
+    config.active = true;
+  } else {
+    config = repo.create({
+      tenantKey,
+      appId: data.appId.trim(),
+      appSecret: data.appSecret.trim(),
+      redirectUri: data.redirectUri.trim(),
+      active: true,
+    });
+  }
+
+  await repo.save(config);
+
+  return {
+    success: true,
+    data: {
+      appId: config.appId,
+      redirectUri: config.redirectUri,
+    },
+  };
+}
+
+async getMetaAppConfig(tenantKey: string) {
+  const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+  const config = await ds.getRepository(MetaApp).findOne({
+    where: { tenantKey, active: true },
+  });
+
+  if (!config) {
+    return { success: true, data: null };
+  }
+
+  return {
+    success: true,
+    data: {
+      appId: config.appId,
+      redirectUri: config.redirectUri,
+    },
+  };
+}
 
   async handleWebhook(payload: any) {
     try {

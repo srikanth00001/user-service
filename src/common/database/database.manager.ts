@@ -21,6 +21,8 @@ import { Message } from 'src/message/entities/message.entity';
 import { AgentAssignment } from 'src/agent-assignment/entities/agent-assignment.entity';
 import { FacebookPage } from 'src/lead_management/facebook/entities/facebook-page.entity';
 import { PhoneTenantMap } from 'src/lead_management/leads/entities/phone-tenant-map.entity';
+import { MetaApp } from 'src/lead_management/facebook/entities/meta-app.entity';
+import { MetaConnection } from 'src/lead_management/facebook/entities/meta-connection.entity';
 
 export interface TenantConnection {
   name: string;
@@ -50,7 +52,7 @@ export class DatabaseManager implements OnModuleInit {
     logging: false,
     entities: [Lead, Note, Temp, Campaign,BusinessUser, BusinessRole, BusinessPermission,MetaLead,ExcelLead,
   GoogleAdsLead,
-  GoogleFormLead,Conversation,Message,AgentAssignment,FacebookPage],
+  GoogleFormLead,Conversation,Message,AgentAssignment,FacebookPage,MetaApp,MetaConnection],
   };
 
   private masterDataSource!: DataSource;
@@ -146,7 +148,8 @@ export class DatabaseManager implements OnModuleInit {
   GoogleAdsLead,
   GoogleFormLead,
   Conversation,Message,AgentAssignment,
-  FacebookPage
+  FacebookPage,
+  MetaApp,MetaConnection
   ], 
     };
 
