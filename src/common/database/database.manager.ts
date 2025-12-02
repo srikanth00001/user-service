@@ -20,6 +20,7 @@ import { Conversation } from 'src/conversation/entities/conversation.entity';
 import { Message } from 'src/message/entities/message.entity';
 import { AgentAssignment } from 'src/agent-assignment/entities/agent-assignment.entity';
 import { FacebookPage } from 'src/lead_management/facebook/entities/facebook-page.entity';
+import { PhoneTenantMap } from 'src/lead_management/leads/entities/phone-tenant-map.entity';
 
 export interface TenantConnection {
   name: string;
@@ -68,7 +69,7 @@ export class DatabaseManager implements OnModuleInit {
       const masterOpts: PostgresConnectionOptions = {
         ...this.baseConfig,
         database: 'postgres',
-        entities: [User, Role],
+        entities: [User, Role,PhoneTenantMap],
       };
       this.masterDataSource = new DataSource(masterOpts);
       await this.masterDataSource.initialize();

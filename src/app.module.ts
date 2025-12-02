@@ -31,6 +31,7 @@ import { MessageModule } from './message/message.module';
 import { AgentAssignmentModule } from './agent-assignment/agent-assignment.module';
 import { TeamInboxModule } from './team-inbox/team-inbox.module';
 import { WebhooksModule } from './webhooks/entities/webhooks.module';
+import { PhoneTenantMap } from './lead_management/leads/entities/phone-tenant-map.entity';
 
 @Module({
   imports: [
@@ -48,7 +49,7 @@ import { WebhooksModule } from './webhooks/entities/webhooks.module';
       database: 'lead-crm',
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       entities: [
-        User,Role, Menu,Permission, Subscription,Plan
+        User,Role, Menu,Permission, Subscription,Plan,PhoneTenantMap
       ],
       synchronize: true,
       logging: true,

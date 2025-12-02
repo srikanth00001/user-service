@@ -49,7 +49,7 @@ async create(
     this.logger.log(`User: ${userId} | DTO:`, dto);
 
     try {
-      const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+      const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
       const { message: msgRepo, conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
       // 1. Validate conversation
@@ -85,7 +85,7 @@ async create(
       // 5. Create & save message
       const msgEntity = msgRepo.create({
         conversation_id: dto.conversation_id,
-        sender_user_id: senderUserId,
+        sender_user_id: senderUserId || undefined,
         content: dto.content || '',
         type: dto.type || 'text',
         parent_message_id: dto.parent_message_id,

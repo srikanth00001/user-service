@@ -7,14 +7,12 @@ import {
   Body,
   HttpException,
   HttpStatus,
-  OnModuleInit,
   Logger,
 } from '@nestjs/common';
 import { TeamInboxService } from 'src/team-inbox/team-inbox.service';
 import { DatabaseManager } from 'src/common/database/database.manager';
 import { Message } from 'src/message/entities/message.entity';
-import { BusinessUser } from 'src/business-user/entities/business-user.entity';
-import { extractTenantDomain } from 'src/common/tenant/tenant.utils';
+import { Lead } from 'src/lead_management/leads/entities/lead.entity';
 
 interface Reaction {
   messageId: string;
@@ -22,28 +20,17 @@ interface Reaction {
 }
 
 @Controller('webhook')
-export class WebhookController implements OnModuleInit {
+export class WebhookController {
   private readonly logger = new Logger(WebhookController.name);
-  private readonly PERSONAL_DOMAIN = 'digiwebspot';
 
   constructor(
     private readonly teamInboxService: TeamInboxService,
     private readonly dbManager: DatabaseManager,
   ) {}
 
-  async onModuleInit() {
-    await this.ensureInitialDigiwebspotDb();
-  }
-
-  private async ensureInitialDigiwebspotDb() {
-    try {
-      await this.dbManager.getOrCreateTenantConnection(`${this.PERSONAL_DOMAIN}_1`);
-      this.logger.log('Initial digiwebspot_1 database ensured.');
-    } catch (error) {
-      this.logger.error('Failed to initialize digiwebspot_1', error.stack);
-    }
-  }
-
+  // ───────────────────────────────────────────────
+  // VERIFY WEBHOOK
+  // ───────────────────────────────────────────────
   @Get()
   verifyWebhook(
     @Query('hub.mode') mode: string,
@@ -57,6 +44,9 @@ export class WebhookController implements OnModuleInit {
     throw new HttpException('Verification failed', HttpStatus.FORBIDDEN);
   }
 
+  // ───────────────────────────────────────────────
+  // HANDLE INCOMING MESSAGE
+  // ───────────────────────────────────────────────
   @Post()
   async handleIncomingMessage(@Body() body: any) {
     try {
@@ -68,16 +58,19 @@ export class WebhookController implements OnModuleInit {
       }
 
       const businessPhoneId = entry.metadata?.phone_number_id;
-      if (!businessPhoneId) {
-        throw new HttpException('Missing phone_number_id', HttpStatus.BAD_REQUEST);
+      const senderPhone = entry.contacts?.[0]?.wa_id;
+
+      if (!senderPhone) {
+        throw new HttpException('Missing sender wa_id', HttpStatus.BAD_REQUEST);
       }
 
-      // Resolve tenantKey from master DB using BusinessUser
-      const tenantKey = await this.resolveTenantKeyFromPhoneId(businessPhoneId);
+      // Resolve tenant database
+      const tenantKey = await this.resolveTenantKey(businessPhoneId, senderPhone);
 
-      // Ensure tenant connection exists
+      // Create tenant connection
       const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
 
+      // Process messages
       for (const message of entry.messages) {
         const senderPhone = message.from;
         let messageContent = message.text?.body || 'Unknown';
@@ -96,10 +89,10 @@ export class WebhookController implements OnModuleInit {
         }
 
         // === HANDLE REACTION ===
-        if (message.type === 'reaction' && message.reaction?.message_id && message.reaction?.emoji) {
+        if (message.type === 'reaction') {
           reaction = {
-            messageId: message.reaction.message_id,
-            emoji: message.reaction.emoji,
+            messageId: message.reaction?.message_id,
+            emoji: message.reaction?.emoji,
           };
           messageContent = reaction.emoji;
           messageType = 'reaction';
@@ -114,24 +107,15 @@ export class WebhookController implements OnModuleInit {
 
         // === INTERACTIVE MESSAGES ===
         if (message.interactive?.type === 'list_reply') {
-          messageContent = message.interactive.list_reply?.title || 'List reply';
-        } else if (message.interactive?.type === 'button_reply') {
-          messageContent = message.interactive.button_reply?.title || 'Button reply';
+          messageContent = message.interactive.list_reply?.title;
+        }
+        if (message.interactive?.type === 'button_reply') {
+          messageContent = message.interactive.button_reply?.title;
         }
 
         const senderName = entry.contacts?.[0]?.profile?.name || null;
 
-        this.logger.log('Processing message:', {
-          tenantKey,
-          senderPhone,
-          messageType,
-          content: messageContent,
-          reaction,
-          whatsappMessageId,
-          parentMessageId,
-        });
-
-        // Pass to TeamInboxService
+        // PROCESS
         await this.teamInboxService.processIncomingMessage({
           tenantKey,
           phoneNumber: senderPhone,
@@ -155,31 +139,34 @@ export class WebhookController implements OnModuleInit {
   }
 
   // ───────────────────────────────────────────────
-  //  RESOLVE TENANT FROM PHONE NUMBER ID (MASTER DB)
+  // TENANT RESOLUTION LOGIC (CORRECTED)
   // ───────────────────────────────────────────────
-  private async resolveTenantKeyFromPhoneId(phoneNumberId: string): Promise<string> {
-    const master = this.dbManager.getMasterDataSource();
-
-    const businessUser = await master
-      .getRepository(BusinessUser)
-      .createQueryBuilder('bu')
-      .where('bu.whatsapp_business_phone_id = :id', { id: phoneNumberId })
-      .getOne();
-
-    if (!businessUser) {
-      throw new HttpException(
-        `Tenant not found for phoneNumberId: ${phoneNumberId}`,
-        HttpStatus.NOT_FOUND,
-      );
+  private async resolveTenantKey(
+    phoneNumberId: string | undefined,
+    phone: string,
+  ): Promise<string> {
+    // 1) MAP PHONE_NUMBER_ID → TENANT
+    const mapRaw = process.env.WHATSAPP_TENANT_MAP;
+    if (phoneNumberId && mapRaw) {
+      try {
+        const map = JSON.parse(mapRaw);
+        if (map[phoneNumberId]) return map[phoneNumberId];
+      } catch {}
     }
 
-    const domain = extractTenantDomain(businessUser.email);
+    // 2) DIRECT SINGLE TENANT OVERRIDE
+    if (process.env.WHATSAPP_TENANT_KEY) return process.env.WHATSAPP_TENANT_KEY;
 
-    // Ensure tenantKey always matches database name convention
-    return this.normalizeDomain(domain);
-  }
+    // 3) SCAN FOR LEAD IN ALL TENANT DBS
+    for (const [tenantKey, conn] of (this.dbManager as any).connections.entries()) {
+      try {
+        const repo = conn.dataSource.getRepository(Lead);
+        const found = await repo.findOne({ where: { phone } });
+        if (found) return tenantKey;
+      } catch {}
+    }
 
-  private normalizeDomain(domain: string): string {
-    return domain.replace(/\./g, '_').toLowerCase();
+    // 4) FINAL FALLBACK
+    return process.env.DEFAULT_TENANT_KEY || 'amazon_com';
   }
 }

@@ -19,6 +19,8 @@ import { DataSource } from 'typeorm';
 import axios from 'axios';
 import { Conversation } from 'src/conversation/entities/conversation.entity';
 import { AgentAssignmentService } from 'src/agent-assignment/agent-assignment.service';
+import { Lead } from 'src/lead_management/leads/entities/lead.entity';
+import { Message } from 'src/message/entities/message.entity';
 
 @Injectable()
 export class TeamInboxService {
@@ -36,7 +38,7 @@ export class TeamInboxService {
   private async getRepos(dataSource: DataSource) {
     return {
       conversation: dataSource.getRepository(Conversation),
-      message: dataSource.getRepository('Message'),
+      message: dataSource.getRepository(Message),
     };
   }
 
@@ -70,8 +72,18 @@ export class TeamInboxService {
       }
     }
 
-    const lead = await this.leadsService.findLeadByPhone(data.tenantKey, data.phoneNumber);
-    if (!lead) throw new NotFoundException('Lead not found');
+    let lead = await this.leadsService.findLeadByPhone(data.tenantKey, data.phoneNumber);
+    if (!lead) {
+      const repo = dataSource.getRepository(Lead);
+      lead = await repo.save(
+        repo.create({
+          name: data.name || 'Unknown',
+          phone: data.phoneNumber,
+          source: 'manual',
+          createdBy: 'system',
+        })
+      );
+    }
 
     const leadSource = lead.source ?? 'manual';
     let conv = await this.conversationService.findByLead(data.tenantKey, lead.id, leadSource);
@@ -104,8 +116,8 @@ export class TeamInboxService {
     const msg = await this.messageService.create(
       data.tenantKey,
       msgDto,
-      'system',
-      'system',
+      '',
+      '',
       data.whatsappMessageId,
     );
 
