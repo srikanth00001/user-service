@@ -49,11 +49,9 @@ async generateSystemUserToken(appId: string, appSecret: string): Promise<string>
       wabaId: string;
       pageId: string;
       pageName: string;
+      longLivedToken: string; // REQUIRED IN DEV MODE
     },
   ) {
-    const metaApp = await this.getMetaApp(tenantKey);
-    const systemUserToken = await this.generateSystemUserToken(metaApp.appId, metaApp.appSecret);
-
     const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
     const repo = ds.getRepository(MetaConnection);
 
@@ -68,13 +66,14 @@ async generateSystemUserToken(appId: string, appSecret: string): Promise<string>
         phoneNumberId: data.phoneNumberId,
         phoneNumber: data.displayPhoneNumber.replace(/[^0-9]/g, ''),
         displayPhoneNumber: data.displayPhoneNumber,
-        accessToken: systemUserToken,
+        accessToken: data.longLivedToken, // Use long-lived user token
         verified: true,
         active: true,
+        connectedAt: new Date(),
       });
     } else {
       connection.active = true;
-      connection.accessToken = systemUserToken;
+      connection.accessToken = data.longLivedToken;
     }
 
     await repo.save(connection);
@@ -150,90 +149,77 @@ async generateSystemUserToken(appId: string, appSecret: string): Promise<string>
   }
 
 
-  async handleWhatsAppOAuthCallback(code: string, userId: string, tenantKey: string) {
-  const metaApp = await this.getMetaApp(tenantKey);
+ async handleWhatsAppOAuthCallback(code: string, userId: string, tenantKey: string) {
+    const metaApp = await this.getMetaApp(tenantKey);
 
-  // Step 1: Get short-lived token
-  const tokenRes = await firstValueFrom(
-    this.httpService.get('https://graph.facebook.com/v20.0/oauth/access_token', {
-      params: {
-        client_id: metaApp.appId,
-        client_secret: metaApp.appSecret,
-        redirect_uri: metaApp.redirectUri,
-        code,
-      },
-    })
-  );
+    // Step 1: Short-lived token
+    const tokenRes = await firstValueFrom(
+      this.httpService.get('https://graph.facebook.com/v20.0/oauth/access_token', {
+        params: {
+          client_id: metaApp.appId,
+          client_secret: metaApp.appSecret,
+          redirect_uri: metaApp.redirectUri,
+          code,
+        },
+      }),
+    );
 
-  const userToken = tokenRes.data.access_token;
+    const userToken = tokenRes.data.access_token;
 
-  // Step 2: Exchange for long-lived token
-  const longLived = await firstValueFrom(
-    this.httpService.get('https://graph.facebook.com/v20.0/oauth/access_token', {
-      params: {
-        grant_type: 'fb_exchange_token',
-        client_id: metaApp.appId,
-        client_secret: metaApp.appSecret,
-        fb_exchange_token: userToken,
-      },
-    })
-  );
+    // Step 2: Long-lived token (60 days)
+    const longLived = await firstValueFrom(
+      this.httpService.get('https://graph.facebook.com/v20.0/oauth/access_token', {
+        params: {
+          grant_type: 'fb_exchange_token',
+          client_id: metaApp.appId,
+          client_secret: metaApp.appSecret,
+          fb_exchange_token: userToken,
+        },
+      }),
+    );
 
-  const longLivedToken = longLived.data.access_token;
+    const longLivedToken = longLived.data.access_token;
 
-  // Step 3: Get WhatsApp Business Accounts
-  const accountsRes = await firstValueFrom(
-    this.httpService.get('https://graph.facebook.com/v20.0/me', {
-      params: {
-        fields: 'accounts{whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}}',
-        access_token: longLivedToken,
-      },
-    })
-  );
+    // Step 3: Get WhatsApp numbers via /me/businesses (2025 working endpoint)
+    const businessRes = await firstValueFrom(
+      this.httpService.get('https://graph.facebook.com/v20.0/me/businesses', {
+        params: {
+          fields: 'id,name,owned_whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}',
+          access_token: longLivedToken,
+        },
+      }),
+    );
 
-  const pages = accountsRes.data.accounts?.data || [];
-  const availableNumbers: any[] = [];
+    const businesses = businessRes.data.data || [];
+    const availableNumbers: any[] = [];
 
-  for (const page of pages) {
-    const wabas = page.whatsapp_business_accounts?.data || [];
-    for (const waba of wabas) {
-      const phones = waba.phone_numbers?.data || [];
-      for (const phone of phones) {
-        availableNumbers.push({
-  id: phone.id,                    // ← keep 'id' for backward compat
-  phoneNumberId: phone.id,         // ← add this
-  display_phone_number: phone.display_phone_number,
-  displayPhoneNumber: phone.display_phone_number,  // ← add camelCase
-  verified_name: phone.verified_name || phone.display_phone_number,
-  verifiedName: phone.verified_name || phone.display_phone_number, // ← add
-  pageId: page.id,
-  pageName: page.name,
-  wabaId: waba.id,
-  page_name: page.name,            // ← optional fallback
-});
+    for (const business of businesses) {
+      const wabas = business.owned_whatsapp_business_accounts?.data || [];
+      for (const waba of wabas) {
+        const phones = waba.phone_numbers?.data || [];
+        for (const phone of phones) {
+          availableNumbers.push({
+            id: phone.id,
+            phoneNumberId: phone.id,
+            displayPhoneNumber: phone.display_phone_number,
+            verifiedName: phone.verified_name || phone.display_phone_number,
+            wabaId: waba.id,
+            wabaName: waba.name,
+            businessId: business.id,
+            businessName: business.name,
+            pageId: '',
+            pageName: business.name,
+          });
+        }
       }
     }
+
+    return {
+      success: true,
+      availableNumbers,
+      longLivedToken, // SEND THIS TO FRONTEND
+    };
   }
-
-  // Step 4: Generate Permanent System User Token (Never expires!)
-  const systemTokenRes = await firstValueFrom(
-    this.httpService.post(`https://graph.facebook.com/v20.0/${metaApp.appId}/access_tokens`, null, {
-      params: {
-        grant_type: 'client_credentials',
-        client_id: metaApp.appId,
-        client_secret: metaApp.appSecret,
-      },
-    })
-  );
-
-  const systemUserToken = systemTokenRes.data.access_token;
-
-  return {
-    success: true,
-    availableNumbers,
-    systemUserToken, // Save this per tenant or globally
-  };
-}
 
   // src/lead_management/facebook/facebook.service.ts
 

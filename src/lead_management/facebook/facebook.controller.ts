@@ -116,17 +116,18 @@ async connectWhatsAppNumber(
     wabaId: string;
     pageId: string;
     pageName: string;
-    tenantKey: string;   // ← ADD THIS
-    userId: string;      // ← ADD THIS
+    tenantKey: string;
+    userId: string;
+    longLivedToken: string;   // ← THIS WAS MISSING → NOW ADDED
   },
   @Req() req: any,
 ) {
-  // Now TypeScript knows these fields exist
   const tenantKey = body.tenantKey || req.user?.tenantKey;
   const userId = body.userId || req.user?.userId;
 
   if (!tenantKey) throw new BadRequestException('tenantKey is required');
   if (!userId) throw new BadRequestException('userId is required');
+  if (!body.longLivedToken) throw new BadRequestException('longLivedToken is required');
 
   const connection = await this.facebookService.saveWhatsAppConnection(
     tenantKey,
@@ -137,6 +138,7 @@ async connectWhatsAppNumber(
       wabaId: body.wabaId,
       pageId: body.pageId,
       pageName: body.pageName,
+      longLivedToken: body.longLivedToken, // ← NOW PASSED CORRECTLY
     },
   );
 
