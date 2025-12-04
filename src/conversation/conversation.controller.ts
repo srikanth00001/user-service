@@ -18,8 +18,9 @@ export class ConversationController {
   }
 
   @Get()
-  async findAll(@Req() req: any) {
+  async findAll(@Req() req: any, @Query('phone') phone?: string) {
     const { userId, email, tenantKey } = this.getUser(req);
+    if (phone) return this.conversationService.findByPhone(tenantKey, phone, userId, email);
     return this.conversationService.findAll(tenantKey, userId, email);
   }
 

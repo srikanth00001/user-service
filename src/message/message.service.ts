@@ -14,6 +14,7 @@ import { DatabaseManager } from 'src/common/database/database.manager';
 import { BusinessUser } from 'src/business-user/entities/business-user.entity';
 import { Conversation } from 'src/conversation/entities/conversation.entity';
 import { WhatsAppService } from 'src/whatsapp/whatsapp.service';
+import { MetaConnection } from 'src/lead_management/facebook/entities/meta-connection.entity';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -108,17 +109,26 @@ async create(
         let sentWhatsappId: string | undefined;
 
         try {
+          const metaRepo = dataSource.getRepository(MetaConnection);
+          const overrideConn = conv.business_phone_number_id
+            ? await metaRepo.findOne({ where: { phoneNumberId: conv.business_phone_number_id, tenantKey } })
+            : null;
+          const opts = overrideConn
+            ? { phoneNumberId: overrideConn.phoneNumberId, accessToken: overrideConn.accessToken }
+            : undefined;
           if (parentWhatsAppMessageId) {
             this.logger.log(`Sending REPLY to WhatsApp message ID: ${parentWhatsAppMessageId}`);
             sentWhatsappId = await this.whatsAppService.sendReplyMessage(
               conv.phone_number,
               dto.content.trim(),
-              parentWhatsAppMessageId
+              parentWhatsAppMessageId,
+              opts
             );
           } else {
             sentWhatsappId = await this.whatsAppService.sendTextMessage(
               conv.phone_number,
-              dto.content.trim()
+              dto.content.trim(),
+              opts
             );
           }
 
@@ -242,8 +252,16 @@ if (mime.startsWith('image/')) {
 
 
   // Upload to WhatsApp
-  const mediaId = await this.whatsAppService.uploadMedia(filePath, whatsappMediaType);
-  const mediaUrl = await this.whatsAppService.getMediaUrl(mediaId);
+  const metaRepo = dataSource.getRepository(MetaConnection);
+  const overrideConn = conv.business_phone_number_id
+    ? await metaRepo.findOne({ where: { phoneNumberId: conv.business_phone_number_id, tenantKey } })
+    : null;
+  const opts = overrideConn
+    ? { phoneNumberId: overrideConn.phoneNumberId, accessToken: overrideConn.accessToken }
+    : undefined;
+
+  const mediaId = await this.whatsAppService.uploadMedia(filePath, whatsappMediaType, opts);
+  const mediaUrl = await this.whatsAppService.getMediaUrl(mediaId, { accessToken: overrideConn?.accessToken });
 
   // Send correctly typed media
   const whatsappMessageId = await this.whatsAppService.sendMediaMessage(
@@ -251,6 +269,7 @@ if (mime.startsWith('image/')) {
     mediaId,
     whatsappMediaType,
     msg.content?.trim() || undefined,
+    opts,
   );
 
   await msgRepo.update(messageId, {
@@ -350,10 +369,15 @@ if (mime.startsWith('image/')) {
 
     if (msg.created_at >= threeDaysAgo) {
       try {
+        const metaRepo = dataSource.getRepository(MetaConnection);
+        const overrideConn = msg.conversation.business_phone_number_id
+          ? await metaRepo.findOne({ where: { phoneNumberId: msg.conversation.business_phone_number_id, tenantKey } })
+          : null;
         await this.whatsAppService.sendReactionMessage(
           msg.conversation.phone_number,
           msg.whatsapp_message_id,
           emoji,
+          overrideConn ? { phoneNumberId: overrideConn.phoneNumberId, accessToken: overrideConn.accessToken } : undefined,
         );
         waReactionSent = true;
         this.logger.log(`Reaction ${emoji} sent to WhatsApp (message ${messageId})`);

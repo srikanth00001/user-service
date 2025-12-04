@@ -13,6 +13,7 @@ import { TeamInboxService } from 'src/team-inbox/team-inbox.service';
 import { DatabaseManager } from 'src/common/database/database.manager';
 import { Message } from 'src/message/entities/message.entity';
 import { Lead } from 'src/lead_management/leads/entities/lead.entity';
+import { MetaConnection } from 'src/lead_management/facebook/entities/meta-connection.entity';
 
 interface Reaction {
   messageId: string;
@@ -125,6 +126,7 @@ export class WebhookController {
           whatsappMessageId,
           parentMessageId,
           reaction,
+          businessPhoneNumberId: businessPhoneId,
         });
       }
 
@@ -145,19 +147,29 @@ export class WebhookController {
     phoneNumberId: string | undefined,
     phone: string,
   ): Promise<string> {
-    // 1) MAP PHONE_NUMBER_ID → TENANT
-    const mapRaw = process.env.WHATSAPP_TENANT_MAP;
-    if (phoneNumberId && mapRaw) {
-      try {
-        const map = JSON.parse(mapRaw);
-        if (map[phoneNumberId]) return map[phoneNumberId];
-      } catch {}
+    // 1) Lookup MetaConnection across tenants
+    if (phoneNumberId) {
+      for (const [tenantKey, conn] of (this.dbManager as any).connections.entries()) {
+        try {
+          const repo = conn.dataSource.getRepository(MetaConnection);
+          const found = await repo.findOne({ where: { phoneNumberId, active: true } });
+          if (found) return tenantKey;
+        } catch {}
+      }
+      // Env-based static map as secondary
+      const mapRaw = process.env.WHATSAPP_TENANT_MAP;
+      if (mapRaw) {
+        try {
+          const map = JSON.parse(mapRaw);
+          if (map[phoneNumberId]) return map[phoneNumberId];
+        } catch {}
+      }
     }
 
     // 2) DIRECT SINGLE TENANT OVERRIDE
     if (process.env.WHATSAPP_TENANT_KEY) return process.env.WHATSAPP_TENANT_KEY;
 
-    // 3) SCAN FOR LEAD IN ALL TENANT DBS
+    // 3) Scan for lead phone in all tenant DBs
     for (const [tenantKey, conn] of (this.dbManager as any).connections.entries()) {
       try {
         const repo = conn.dataSource.getRepository(Lead);

@@ -19,4 +19,12 @@ export class CreateConversationDto {
   @IsOptional()
   @IsString()
   lead_name?: string;
+
+  @IsOptional()
+  @IsString()
+  business_phone_number_id?: string;
+
+  @IsOptional()
+  @IsString()
+  business_display_phone_number?: string;
 }

@@ -10,22 +10,27 @@ export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
 
   private readonly API_VERSION = 'v20.0'; // Meta auto-upgrades safely
-  private readonly phoneNumberId = '913944838464584';
-  private readonly accessToken = 'EAAQZAtXAOD0gBQBJlIKk3RPLtquVC5dygIQTZCPtlZA5ESy6TlL2jpoKkPCb1p8AJClywcj8bZCLEOZAGFIWqQZBaHsm5vEtoag5bvQmSQiDakU7XDE1f9SDNZCV1MoErZB3VM9KOxBZBEf3fCJZASFCDWwGANbkOOBjxauzFENlN19W62LTbBzzmkPCCpAtuncFrVMIGkAPg3GlivYwakCrRF9E6axO3UeShYQZA1dfLHcQl9fnSFabZCl3lN0LXj09tqoZApZBTyzYGWIhgx1HmJlNrZCCzm1';
+  private readonly defaultPhoneNumberId = '677562115441844';
+  private readonly defaultAccessToken = 'EAAQZAtXAOD0gBQDAe7pr4VXyFGlQ5pZAUxGjqGJcyTn5kKZBTdXDWHYPqxZAVrQZBXSN6acP83O05xtfYexN284mfgZC1Y4DWlwS9xovlyrxmpHQHYilGbZBEq7zUCgWZCJs5UFpwLzl04kUhPQ1pS1lnw0u3b1l54sWNoiX63iNFQwdcQZCqen4inEyIc2cOsdXCs9J3AdB01mWTlA9Y7jrbXr1vj4WSkgbhCFP5MZAnrzZCZBCdMn7h83kMbGXI6SMG8pBD1SDuLgZAxJrwLZCRPtZBdMxj3c';
 
   private get baseUrl() {
     return `https://graph.facebook.com/${this.API_VERSION}`;
   }
 
-  private getHeaders(contentType = 'application/json') {
+  private getHeaders(contentType = 'application/json', overrideAccessToken?: string) {
+    const token = overrideAccessToken || this.defaultAccessToken;
     return {
-      Authorization: `Bearer ${this.accessToken}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': contentType,
     };
   }
 
+  private getPhoneNumberId(overridePhoneNumberId?: string) {
+    return overridePhoneNumberId || this.defaultPhoneNumberId;
+  }
+
   // TEXT MESSAGE – 100% WORKING ON v23+
-  async sendTextMessage(to: string, content: string): Promise<string> {
+  async sendTextMessage(to: string, content: string, opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -36,11 +41,11 @@ export class WhatsAppService {
         body: content.trim(),
       },
     };
-    return this.sendPayload(payload);
+    return this.sendPayload(payload, opts);
   }
 
   // REPLY MESSAGE
-  async sendReplyMessage(to: string, content: string, replyToMessageId: string): Promise<string> {
+  async sendReplyMessage(to: string, content: string, replyToMessageId: string, opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -52,7 +57,7 @@ export class WhatsAppService {
       },
       context: { message_id: replyToMessageId },
     };
-    return this.sendPayload(payload);
+    return this.sendPayload(payload, opts);
   }
 
   // MEDIA MESSAGE
@@ -61,6 +66,7 @@ export class WhatsAppService {
     mediaId: string,
     type: 'image' | 'video' | 'document' | 'audio',
     caption?: string,
+    opts?: { phoneNumberId?: string; accessToken?: string },
   ): Promise<string> {
     const payload: any = {
       messaging_product: 'whatsapp',
@@ -72,11 +78,11 @@ export class WhatsAppService {
     if (caption?.trim()) payload[type].caption = caption.trim();
     if (type === 'document') payload[type].filename = 'file';
 
-    return this.sendPayload(payload);
+    return this.sendPayload(payload, opts);
   }
 
   // UPLOAD FROM FILE PATH ← THIS IS THE ONE YOU NEED FOR MessageService.upload()
-  async uploadMedia(filePath: string, mediaType: 'image' | 'video' | 'document' | 'audio'): Promise<string> {
+  async uploadMedia(filePath: string, mediaType: 'image' | 'video' | 'document' | 'audio', opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
     form.append('type', this.getMimeType(mediaType));
@@ -85,8 +91,8 @@ export class WhatsAppService {
       contentType: this.getMimeType(mediaType),
     });
 
-    const res = await axios.post(`${this.baseUrl}/${this.phoneNumberId}/media`, form, {
-      headers: { ...this.getHeaders(), ...form.getHeaders() },
+    const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts?.phoneNumberId)}/media`, form, {
+      headers: { ...this.getHeaders(undefined, opts?.accessToken), ...form.getHeaders() },
       timeout: 90_000,
       maxBodyLength: Infinity,
     });
@@ -99,6 +105,7 @@ export class WhatsAppService {
     buffer: Buffer,
     filename: string,
     mediaType: 'image' | 'video' | 'document' | 'audio',
+    opts?: { phoneNumberId?: string; accessToken?: string },
   ): Promise<string> {
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
@@ -112,8 +119,8 @@ export class WhatsAppService {
       contentType: this.getMimeType(mediaType),
     });
 
-    const res = await axios.post(`${this.baseUrl}/${this.phoneNumberId}/media`, form, {
-      headers: { ...this.getHeaders(), ...form.getHeaders() },
+    const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts?.phoneNumberId)}/media`, form, {
+      headers: { ...this.getHeaders(undefined, opts?.accessToken), ...form.getHeaders() },
       timeout: 90_000,
       maxBodyLength: Infinity,
     });
@@ -125,6 +132,7 @@ export class WhatsAppService {
   phoneNumber: string,
   messageId: string,
   emoji: string,
+  opts?: { phoneNumberId?: string; accessToken?: string },
 ): Promise<string> {  // return message ID for consistency
   try {
     const formattedPhone = this.formatPhoneNumber(phoneNumber);
@@ -154,7 +162,7 @@ export class WhatsAppService {
     this.logger.log('Sending reaction to WhatsApp:', { to: formattedPhone, messageId, emoji });
 
     // ← CRITICAL: Use the same sendPayload() as text/media messages
-    const result = await this.sendPayload(payload);
+    const result = await this.sendPayload(payload, opts);
 
     this.logger.log('Reaction sent successfully:', result);
     return result;
@@ -171,18 +179,18 @@ export class WhatsAppService {
   }
 }
 
-  async getMediaUrl(mediaId: string): Promise<string> {
+  async getMediaUrl(mediaId: string, opts?: { accessToken?: string }): Promise<string> {
     const res = await axios.get(`${this.baseUrl}/${mediaId}`, {
-      headers: this.getHeaders(),
+      headers: this.getHeaders(undefined, opts?.accessToken),
       params: { fields: 'url' },
     });
     return res.data.url;
   }
 
-  private async sendPayload(payload: any): Promise<string> {
+  private async sendPayload(payload: any, opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
     try {
-      const res = await axios.post(`${this.baseUrl}/${this.phoneNumberId}/messages`, payload, {
-        headers: this.getHeaders(),
+      const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts?.phoneNumberId)}/messages`, payload, {
+        headers: this.getHeaders(undefined, opts?.accessToken),
         timeout: 30_000,
       });
       return res.data.messages?.[0]?.id || 'sent';

@@ -105,4 +105,11 @@ async getAll(@Req() req: any) {
   const { userId, email } = this.getUser(req);
   return this.leadsService.getAllSources(userId, email); 
 }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('assigned')
+  async getAssigned(@Req() req: any) {
+    const { userId, email } = this.getUser(req);
+    return this.leadsService.getAssignedForUser(userId, email);
+  }
 }

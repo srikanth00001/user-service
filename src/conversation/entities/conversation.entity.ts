@@ -16,6 +16,12 @@ export class Conversation {
   phone_number: string;
 
   @Column({ nullable: true })
+  business_phone_number_id: string;
+
+  @Column({ nullable: true })
+  business_display_phone_number: string;
+
+  @Column({ nullable: true })
   lead_name: string;
 
   @Column({ nullable: true })

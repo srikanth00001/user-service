@@ -170,12 +170,12 @@ async getWhatsAppConnections(@Req() req: any) {
   @UseGuards(JwtAuthGuard)
   @Post('save-page')
   async savePage(@Req() req: any, @Body() body: SavePageDto) {
-    const userId = req.user.userId;
-    const tenantKey = req.user.tenantKey;
+    const userId = req.user?.sub || req.user?.id;
+    const tenantKey = req.user?.tenantKey;
     try {
       const saved = await this.facebookPageService.saveConnectedPage({
-        tenantKey,
-        userId,
+        tenantKey: String(tenantKey),
+        userId: String(userId),
         pageId: body.pageId,
         pageName: body.pageName,
         accessToken: body.pageAccessToken,
@@ -189,9 +189,9 @@ async getWhatsAppConnections(@Req() req: any) {
   @UseGuards(JwtAuthGuard)
 @Get('page')
 async getConnectedPages(@Req() req: any) {
-  const userId = req.user.userId;
-  const tenantKey = req.user.tenantKey;
-  const pages = await this.facebookPageService.getConnectedPages(userId, tenantKey);
+  const userId = req.user?.sub || req.user?.id;
+  const tenantKey = req.user?.tenantKey;
+  const pages = await this.facebookPageService.getConnectedPages(String(userId), String(tenantKey));
   return { success: true, data: pages }; // Now returns array
 }
 

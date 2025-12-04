@@ -51,17 +51,17 @@ export class FacebookPageService {
    * Get ALL active connected pages for a user
    */
   async getConnectedPages(userId: string, tenantKey: string): Promise<FacebookPage[]> {
-    console.log(`Fetching all pages for user=${userId}, tenant=${tenantKey}`);
+    console.log(`Fetching pages for tenant=${tenantKey} (user=${userId})`);
     const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
     if (!dataSource) throw new Error('Tenant DB not found');
 
     const repo = dataSource.getRepository(FacebookPage);
     const pages = await repo.find({
-      where: { connectedByUserId: userId, active: true },
+      where: { tenantKey, active: true },
       order: { pageName: 'ASC' },
     });
 
-    console.log('Connected pages:', pages);
+    console.log('Tenant pages:', pages);
     return pages;
   }
 

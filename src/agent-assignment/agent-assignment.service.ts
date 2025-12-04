@@ -49,7 +49,7 @@ export class AgentAssignmentService {
   }
 
   /**
-   * Create agent assignment + AUTO-CREATE CONVERSATION if not exists
+   * Create agent assignment without creating conversation
    */
   async create(
     tenantKey: string,
@@ -81,31 +81,6 @@ export class AgentAssignmentService {
     });
 
     const saved = await assignRepo.save(assignment);
-
-    // ── AUTO-CREATE CONVERSATION IF NOT EXISTS ──
-    let conversation = await convRepo.findOne({
-      where: { lead_id: dto.lead_id, source: dto.source },
-    });
-
-    if (!conversation) {
-      conversation = convRepo.create({
-        lead_id: dto.lead_id,
-        source: dto.source,
-        phone_number: lead.phone,
-        lead_name: lead.name,
-        createdBy: email,
-        assigned_agent_id: dto.assigned_agent_id,
-        status: 'open',
-        updated_at: new Date(),
-      });
-      await convRepo.save(conversation);
-    } else {
-      // Update existing conversation
-      await convRepo.update(
-        { lead_id: dto.lead_id, source: dto.source },
-        { assigned_agent_id: dto.assigned_agent_id, updated_at: new Date() },
-      );
-    }
 
     return { success: true, data: saved };
   }

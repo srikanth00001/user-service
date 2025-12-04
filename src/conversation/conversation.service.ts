@@ -9,6 +9,7 @@ import { BusinessUser } from 'src/business-user/entities/business-user.entity';
 import { Message } from 'src/message/entities/message.entity';
 import { LeadsService } from 'src/lead_management/leads/leads.service';
 import { AgentAssignmentService } from 'src/agent-assignment/agent-assignment.service';
+import { MetaConnection } from 'src/lead_management/facebook/entities/meta-connection.entity';
 
 // Extended interface for frontend needs
 export interface ConversationListItem extends Conversation {
@@ -64,18 +65,30 @@ export class ConversationService {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
     const { conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
+
     const lead = await this.leadsService.findLeadById(tenantKey, dto.lead_id, dto.source || 'manual');
     if (!lead) throw new NotFoundException('Lead not found');
 
     const assignment = await this.agentAssignmentService.findByLead(tenantKey, dto.lead_id, dto.source || 'manual');
     const assignedAgentId = assignment?.assigned_agent_id;
 
-    const conv = convRepo.create({
-      ...dto,
+    const metaRepo = dataSource.getRepository(MetaConnection);
+    let connection: MetaConnection | null = null;
+    if (dto.business_phone_number_id) {
+      connection = await metaRepo.findOne({ where: { tenantKey, phoneNumberId: dto.business_phone_number_id } });
+    }
+
+    const conv = convRepo.create();
+    Object.assign(conv, {
+      lead_id: dto.lead_id,
+      source: dto.source || 'manual',
       phone_number: lead.phone,
       lead_name: lead.name,
       createdBy: email,
       assigned_agent_id: assignedAgentId || undefined,
+      business_phone_number_id: dto.business_phone_number_id || null,
+      business_display_phone_number: dto.business_display_phone_number || connection?.displayPhoneNumber || null,
+      channel: 'whatsapp',
     });
 
     const saved = await convRepo.save(conv);
@@ -94,7 +107,7 @@ export class ConversationService {
     return { success: true, data: result };
   }
 
-async findAll(tenantKey: string, userId: string, email: string): Promise<{ success: boolean; data: ConversationListItem[] }> {
+  async findAll(tenantKey: string, userId: string, email: string): Promise<{ success: boolean; data: ConversationListItem[] }> {
   const dataSource = await this.getDataSourceForUser(userId, email);
   const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
@@ -140,6 +153,8 @@ async findAll(tenantKey: string, userId: string, email: string): Promise<{ succe
       lead_id: conv.lead_id,
       source: conv.source,
       phone_number: conv.phone_number,
+      business_phone_number_id: conv.business_phone_number_id,
+      business_display_phone_number: conv.business_display_phone_number,
       lead_name: conv.lead_name,
       assigned_agent_id: conv.assigned_agent_id,
       status: conv.status,
@@ -164,6 +179,18 @@ async findAll(tenantKey: string, userId: string, email: string): Promise<{ succe
 
   return { success: true, data: enriched };
 }
+
+  async findByPhone(
+    tenantKey: string,
+    phone: string,
+    userId: string,
+    email: string,
+  ): Promise<{ success: boolean; data: Conversation | null }> {
+    const dataSource = await this.getDataSourceForUser(userId, email);
+    const { conversation: convRepo } = await this.getRepos(dataSource);
+    const conv = await convRepo.findOne({ where: { phone_number: phone } });
+    return { success: true, data: conv || null };
+  }
 
   async findOne(tenantKey: string, id: number, userId: string, email: string) {
     const dataSource = await this.getDataSourceForUser(userId, email);

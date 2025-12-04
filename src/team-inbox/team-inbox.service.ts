@@ -51,9 +51,10 @@ export class TeamInboxService {
     whatsappMessageId?: string;
     parentMessageId?: number;
     reaction?: { messageId: string; emoji: string };
+    businessPhoneNumberId?: string;
   }) {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(data.tenantKey);
-    const { message: msgRepo } = await this.getRepos(dataSource);
+    const { message: msgRepo, conversation: convRepo } = await this.getRepos(dataSource);
 
     if (data.whatsappMessageId) {
       const exists = await msgRepo.findOne({ where: { whatsapp_message_id: data.whatsappMessageId } });
@@ -86,7 +87,11 @@ export class TeamInboxService {
     }
 
     const leadSource = lead.source ?? 'manual';
-    let conv = await this.conversationService.findByLead(data.tenantKey, lead.id, leadSource);
+    // Prefer existing conversation by phone number to avoid source mismatches creating duplicate conversations
+    let conv = await convRepo.findOne({ where: { phone_number: data.phoneNumber } });
+    if (!conv) {
+      conv = await this.conversationService.findByLead(data.tenantKey, lead.id, leadSource);
+    }
 
     if (!conv) {
       const dto: CreateConversationDto = {
@@ -94,7 +99,8 @@ export class TeamInboxService {
         source: leadSource,
         phone_number: data.phoneNumber,
         lead_name: data.name || lead.name,
-      };
+        business_phone_number_id: data.businessPhoneNumberId,
+      } as any;
       conv = (await this.conversationService.create(data.tenantKey, dto, 'system', 'system')).data;
     }
 
@@ -159,7 +165,7 @@ async send(tenantKey: string, dto: CreateMessageDto, userId: string, email: stri
         whatsappMessageId = await this.whatsAppService.sendReplyMessage(
           conv.phone_number,
           dto.content,
-          parent.whatsapp_message_id!,
+          parent.whatsapp_message_id,
         );
       } else {
         whatsappMessageId = await this.whatsAppService.sendTextMessage(conv.phone_number, dto.content);
