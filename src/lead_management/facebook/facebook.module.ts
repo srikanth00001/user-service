@@ -12,10 +12,17 @@ import { FacebookPage } from './entities/facebook-page.entity';
 import { FacebookPageService } from './facebook-page.service';
 import { MetaApp } from './entities/meta-app.entity';
 import { MetaConnection } from './entities/meta-connection.entity';
+import { TeamInboxModule } from 'src/team-inbox/team-inbox.module';
 
 @Module({
-  imports: [HttpModule, LeadsModule, CampaignsModule, TypeOrmModule.forFeature([MetaLead,Campaign,FacebookPage,MetaApp,MetaConnection])],
+  imports: [
+    HttpModule,
+    LeadsModule,
+    CampaignsModule,
+    TypeOrmModule.forFeature([MetaLead, Campaign, FacebookPage, MetaApp, MetaConnection]),
+    TeamInboxModule,
+  ],
   controllers: [FacebookController],
-  providers: [FacebookService,DatabaseManager,FacebookPageService],
+  providers: [FacebookService, DatabaseManager, FacebookPageService],
 })
-export class FacebookModule {}
+export class FacebookModule { }

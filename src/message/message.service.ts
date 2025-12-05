@@ -29,7 +29,7 @@ export class MessageService {
     private readonly dbManager: DatabaseManager,
     private readonly whatsAppService: WhatsAppService,
     private readonly eventEmitter: EventEmitter2,
-  ) {}
+  ) { }
 
   public async getRepos(dataSource: DataSource) {
     return {
@@ -39,7 +39,7 @@ export class MessageService {
     };
   }
 
-async create(
+  async create(
     tenantKey: string,
     dto: CreateMessageDto,
     userId: string,
@@ -108,14 +108,22 @@ async create(
       if (senderUserId && dto.type === 'text' && dto.content?.trim()) {
         let sentWhatsappId: string | undefined;
 
+
         try {
           const metaRepo = dataSource.getRepository(MetaConnection);
           const overrideConn = conv.business_phone_number_id
             ? await metaRepo.findOne({ where: { phoneNumberId: conv.business_phone_number_id, tenantKey } })
             : null;
-          const opts = overrideConn
-            ? { phoneNumberId: overrideConn.phoneNumberId, accessToken: overrideConn.accessToken }
-            : undefined;
+
+          if (!overrideConn) {
+            throw new NotFoundException('WhatsApp connection not found for this conversation. Please connect your WhatsApp Business account.');
+          }
+
+          const opts = {
+            phoneNumberId: overrideConn.phoneNumberId,
+            accessToken: overrideConn.accessToken
+          };
+
           if (parentWhatsAppMessageId) {
             this.logger.log(`Sending REPLY to WhatsApp message ID: ${parentWhatsAppMessageId}`);
             sentWhatsappId = await this.whatsAppService.sendReplyMessage(
@@ -212,95 +220,101 @@ async create(
   }
 
   async upload(
-  tenantKey: string,
-  messageId: number,
-  file: Express.Multer.File,
-  userId: string,
-  email: string,
-  view_once = false,
-): Promise<{ success: true; data: MessageWithSender }> {
-  const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
-  const { message: msgRepo, conversation: convRepo } = await this.getRepos(dataSource);
+    tenantKey: string,
+    messageId: number,
+    file: Express.Multer.File,
+    userId: string,
+    email: string,
+    view_once = false,
+  ): Promise<{ success: true; data: MessageWithSender }> {
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+    const { message: msgRepo, conversation: convRepo } = await this.getRepos(dataSource);
 
-  const msg = await msgRepo.findOne({ where: { id: messageId } });
-  if (!msg) throw new NotFoundException('Message not found');
+    const msg = await msgRepo.findOne({ where: { id: messageId } });
+    if (!msg) throw new NotFoundException('Message not found');
 
-  const conv = await convRepo.findOne({ where: { id: msg.conversation_id } });
-  if (!conv) throw new NotFoundException('Conversation not found');
+    const conv = await convRepo.findOne({ where: { id: msg.conversation_id } });
+    if (!conv) throw new NotFoundException('Conversation not found');
 
-  const tmpDir = path.join(process.cwd(), 'tmp');
-  const safeFileName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-  const filePath = path.join(tmpDir, safeFileName);
+    const tmpDir = path.join(process.cwd(), 'tmp');
+    const safeFileName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const filePath = path.join(tmpDir, safeFileName);
 
-  await fs.mkdir(tmpDir, { recursive: true });
-  await fs.writeFile(filePath, file.buffer);
+    await fs.mkdir(tmpDir, { recursive: true });
+    await fs.writeFile(filePath, file.buffer);
 
-  // CRITICAL FIX: CORRECT MAPPING FROM MIME → WHATSAPP TYPE
- const mime = file.mimetype.toLowerCase();
+    // CRITICAL FIX: CORRECT MAPPING FROM MIME → WHATSAPP TYPE
+    const mime = file.mimetype.toLowerCase();
 
-let whatsappMediaType: 'image' | 'video' | 'document' | 'audio';
+    let whatsappMediaType: 'image' | 'video' | 'document' | 'audio';
 
-if (mime.startsWith('image/')) {
-  whatsappMediaType = 'image';
-} else if (mime.startsWith('video/')) {
-  whatsappMediaType = 'video';
-} else if (mime.startsWith('audio/')) {
-  whatsappMediaType = 'audio';
-} else {
-  whatsappMediaType = 'document';
-}
+    if (mime.startsWith('image/')) {
+      whatsappMediaType = 'image';
+    } else if (mime.startsWith('video/')) {
+      whatsappMediaType = 'video';
+    } else if (mime.startsWith('audio/')) {
+      whatsappMediaType = 'audio';
+    } else {
+      whatsappMediaType = 'document';
+    }
 
 
-  // Upload to WhatsApp
-  const metaRepo = dataSource.getRepository(MetaConnection);
-  const overrideConn = conv.business_phone_number_id
-    ? await metaRepo.findOne({ where: { phoneNumberId: conv.business_phone_number_id, tenantKey } })
-    : null;
-  const opts = overrideConn
-    ? { phoneNumberId: overrideConn.phoneNumberId, accessToken: overrideConn.accessToken }
-    : undefined;
+    // Upload to WhatsApp
+    const metaRepo = dataSource.getRepository(MetaConnection);
+    const overrideConn = conv.business_phone_number_id
+      ? await metaRepo.findOne({ where: { phoneNumberId: conv.business_phone_number_id, tenantKey } })
+      : null;
 
-  const mediaId = await this.whatsAppService.uploadMedia(filePath, whatsappMediaType, opts);
-  const mediaUrl = await this.whatsAppService.getMediaUrl(mediaId, { accessToken: overrideConn?.accessToken });
+    if (!overrideConn) {
+      throw new NotFoundException('WhatsApp connection not found for this conversation. Please connect your WhatsApp Business account.');
+    }
 
-  // Send correctly typed media
-  const whatsappMessageId = await this.whatsAppService.sendMediaMessage(
-    conv.phone_number,
-    mediaId,
-    whatsappMediaType,
-    msg.content?.trim() || undefined,
-    opts,
-  );
+    const opts = {
+      phoneNumberId: overrideConn.phoneNumberId,
+      accessToken: overrideConn.accessToken
+    };
 
-  await msgRepo.update(messageId, {
-    media_url: mediaUrl,
-    filename: safeFileName,
-    view_once,
-    whatsapp_message_id: whatsappMessageId,
-  });
+    const mediaId = await this.whatsAppService.uploadMedia(filePath, whatsappMediaType, opts);
+    const mediaUrl = await this.whatsAppService.getMediaUrl(mediaId, { accessToken: overrideConn.accessToken });
 
-  const updated = await msgRepo.findOne({ where: { id: messageId } });
-  if (!updated) throw new NotFoundException('Updated message not found');
+    // Send correctly typed media
+    const whatsappMessageId = await this.whatsAppService.sendMediaMessage(
+      conv.phone_number,
+      mediaId,
+      whatsappMediaType,
+      msg.content?.trim() || undefined,
+      opts,
+    );
 
-  const updatedWithSender: MessageWithSender = updated as MessageWithSender;
-  if (updated.sender_user_id) {
-    const user = await dataSource.getRepository(BusinessUser).findOne({
-      where: { id: updated.sender_user_id },
+    await msgRepo.update(messageId, {
+      media_url: mediaUrl,
+      filename: safeFileName,
+      view_once,
+      whatsapp_message_id: whatsappMessageId,
     });
-    updatedWithSender.senderUser = user ?? undefined;
+
+    const updated = await msgRepo.findOne({ where: { id: messageId } });
+    if (!updated) throw new NotFoundException('Updated message not found');
+
+    const updatedWithSender: MessageWithSender = updated as MessageWithSender;
+    if (updated.sender_user_id) {
+      const user = await dataSource.getRepository(BusinessUser).findOne({
+        where: { id: updated.sender_user_id },
+      });
+      updatedWithSender.senderUser = user ?? undefined;
+    }
+
+    this.eventEmitter.emit('message.created', {
+      message: updatedWithSender,
+      conversationId: updated.conversation_id,
+      tenantKey,
+      phoneNumber: conv.phone_number,
+    });
+
+    await fs.unlink(filePath).catch(() => { });
+
+    return { success: true, data: updatedWithSender };
   }
-
-  this.eventEmitter.emit('message.created', {
-    message: updatedWithSender,
-    conversationId: updated.conversation_id,
-    tenantKey,
-    phoneNumber: conv.phone_number,
-  });
-
-  await fs.unlink(filePath).catch(() => {});
-
-  return { success: true, data: updatedWithSender };
-}
 
   async forward(
     tenantKey: string,
@@ -345,70 +359,75 @@ if (mime.startsWith('image/')) {
   }
 
   async react(
-  tenantKey: string,
-  messageId: number,
-  emoji: string,
-  userId: string,
-  email: string,
-): Promise<{ success: true; data: MessageWithSender }> {
-  const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
-  const { message: msgRepo } = await this.getRepos(dataSource);
+    tenantKey: string,
+    messageId: number,
+    emoji: string,
+    userId: string,
+    email: string,
+  ): Promise<{ success: true; data: MessageWithSender }> {
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+    const { message: msgRepo } = await this.getRepos(dataSource);
 
-  const msg = await msgRepo.findOne({
-    where: { id: messageId },
-    relations: ['conversation'],
-  });
-  if (!msg) throw new NotFoundException('Message not found');
+    const msg = await msgRepo.findOne({
+      where: { id: messageId },
+      relations: ['conversation'],
+    });
+    if (!msg) throw new NotFoundException('Message not found');
 
-  let waReactionSent = false;
+    let waReactionSent = false;
 
-  if (msg.whatsapp_message_id) {
-    // Block reactions to messages older than 3 days (safe limit)
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    if (msg.whatsapp_message_id) {
+      // Block reactions to messages older than 3 days (safe limit)
+      const threeDaysAgo = new Date();
+      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-    if (msg.created_at >= threeDaysAgo) {
-      try {
-        const metaRepo = dataSource.getRepository(MetaConnection);
-        const overrideConn = msg.conversation.business_phone_number_id
-          ? await metaRepo.findOne({ where: { phoneNumberId: msg.conversation.business_phone_number_id, tenantKey } })
-          : null;
-        await this.whatsAppService.sendReactionMessage(
-          msg.conversation.phone_number,
-          msg.whatsapp_message_id,
-          emoji,
-          overrideConn ? { phoneNumberId: overrideConn.phoneNumberId, accessToken: overrideConn.accessToken } : undefined,
-        );
-        waReactionSent = true;
-        this.logger.log(`Reaction ${emoji} sent to WhatsApp (message ${messageId})`);
-      } catch (error: any) {
-        // Only log real errors (not 131000)
-        if (error.response?.data?.error?.code !== 131000) {
-          this.logger.error('Failed to send reaction', error.response?.data || error.message);
+      if (msg.created_at >= threeDaysAgo) {
+        try {
+          const metaRepo = dataSource.getRepository(MetaConnection);
+          const overrideConn = msg.conversation.business_phone_number_id
+            ? await metaRepo.findOne({ where: { phoneNumberId: msg.conversation.business_phone_number_id, tenantKey } })
+            : null;
+
+          if (!overrideConn) {
+            throw new NotFoundException('WhatsApp connection not found for this conversation. Please connect your WhatsApp Business account.');
+          }
+
+          await this.whatsAppService.sendReactionMessage(
+            msg.conversation.phone_number,
+            msg.whatsapp_message_id,
+            emoji,
+            { phoneNumberId: overrideConn.phoneNumberId, accessToken: overrideConn.accessToken },
+          );
+          waReactionSent = true;
+          this.logger.log(`Reaction ${emoji} sent to WhatsApp (message ${messageId})`);
+        } catch (error: any) {
+          // Only log real errors (not 131000)
+          if (error.response?.data?.error?.code !== 131000) {
+            this.logger.error('Failed to send reaction', error.response?.data || error.message);
+          }
+          // Don't throw — still save locally
         }
-        // Don't throw — still save locally
+      } else {
+        this.logger.verbose('Reaction blocked: message too old (>3 days)');
       }
-    } else {
-      this.logger.verbose('Reaction blocked: message too old (>3 days)');
     }
+
+    // Always save locally (for your team inbox)
+    await msgRepo.update(messageId, { reaction: emoji });
+
+    const updated = await msgRepo.findOne({ where: { id: messageId }, relations: ['conversation'] });
+    const updatedWithSender = updated as MessageWithSender;
+    // ... attach sender etc.
+
+    this.eventEmitter.emit('message.reacted', {
+      messageId,
+      emoji,
+      conversationId: msg.conversation_id,
+      sentToWhatsApp: waReactionSent,
+    });
+
+    return { success: true, data: updatedWithSender };
   }
-
-  // Always save locally (for your team inbox)
-  await msgRepo.update(messageId, { reaction: emoji });
-
-  const updated = await msgRepo.findOne({ where: { id: messageId }, relations: ['conversation'] });
-  const updatedWithSender = updated as MessageWithSender;
-  // ... attach sender etc.
-
-  this.eventEmitter.emit('message.reacted', {
-    messageId,
-    emoji,
-    conversationId: msg.conversation_id,
-    sentToWhatsApp: waReactionSent,
-  });
-
-  return { success: true, data: updatedWithSender };
-}
 
   async deleteForMe(
     tenantKey: string,
@@ -504,8 +523,8 @@ if (mime.startsWith('image/')) {
     if (!msg) throw new NotFoundException('Message not found');
     msg.labels = [...new Set([...(msg.labels || []), label])];
     await msgRepo.save(msg);
-const updated = await msgRepo.findOne({ where: { id: messageId } });
-return { success: true, data: updated as MessageWithSender };
+    const updated = await msgRepo.findOne({ where: { id: messageId } });
+    return { success: true, data: updated as MessageWithSender };
   }
 
   async removeLabel(tenantKey: string, messageId: number, label: string, userId: string, email: string) {

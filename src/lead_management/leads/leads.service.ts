@@ -31,7 +31,7 @@ export class LeadsService {
     private messageService: MessageService,
     @Inject(forwardRef(() => ConversationService))
     private conversationService: ConversationService,
-  ) {}
+  ) { }
 
   private getRepos(dataSource: DataSource) {
     return {
@@ -51,7 +51,7 @@ export class LeadsService {
         ...dto,
         source: dto.source || 'manual',
         createdBy: email,
-         assignedTo: null, 
+        assignedTo: null,
       }),
     );
   }
@@ -70,115 +70,116 @@ export class LeadsService {
   }
 
   async getAllSources(userId: string, email: string) {
-  const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
 
-  const [manual, meta, gads, gform, excel] = await Promise.all([
-    // Manual Leads
-    dataSource.getRepository(Lead).find({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        externalLeadId: true,
-        createdAt: true,
-      },
-      where: [{ createdBy: email }, { createdBy: userId }],
-      relations: ['campaign'],
-    }),
+    const [manual, meta, gads, gform, excel] = await Promise.all([
+      // Manual Leads
+      dataSource.getRepository(Lead).find({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          externalLeadId: true,
+          createdAt: true,
+        },
+        where: [{ createdBy: email }, { createdBy: userId }],
+        relations: ['campaign'],
+      }),
 
-    // Meta Leads
-    dataSource.getRepository(MetaLead).find({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        createdAt: true,
-      },
-      where: [{ createdBy: email }, { createdBy: userId }],
-      relations: ['campaign'],
-    }),
+      // Meta Leads
+      dataSource.getRepository(MetaLead).find({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          createdAt: true,
+        },
+        where: [{ createdBy: email }, { createdBy: userId }],
+        relations: ['campaign'],
+      }),
 
-    // Google Ads Leads - CRITICAL FIX
-    dataSource.getRepository(GoogleAdsLead).find({
-      select: {
-        id: true,
-        gclid: true,
-        name: true,
-        email: true,
-        phone: true,
-        createdAt: true,           // This was missing!
-      },
-      relations: ['campaign'],       // To get campaign.name
-      where: [{ createdBy: email }, { createdBy: userId }],
-    }),
+      // Google Ads Leads - CRITICAL FIX
+      dataSource.getRepository(GoogleAdsLead).find({
+        select: {
+          id: true,
+          gclid: true,
+          name: true,
+          email: true,
+          phone: true,
+          createdAt: true,           // This was missing!
+        },
+        relations: ['campaign'],       // To get campaign.name
+        where: [{ createdBy: email }, { createdBy: userId }],
+      }),
 
-    // Google Form Leads
-    dataSource.getRepository(GoogleFormLead).find({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        createdAt: true,
-      },
-      where: [{ createdBy: email }, { createdBy: userId }],
-      relations: ['campaign'],
-    }),
+      // Google Form Leads
+      dataSource.getRepository(GoogleFormLead).find({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          createdAt: true,
+        },
+        where: [{ createdBy: email }, { createdBy: userId }],
+        relations: ['campaign'],
+      }),
 
-    // Excel Leads
-    dataSource.getRepository(ExcelLead).find({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        createdAt: true,
-      },
-      where: [{ createdBy: email }, { createdBy: userId }],
-    }),
-  ]);
+      // Excel Leads
+      dataSource.getRepository(ExcelLead).find({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          createdAt: true,
+        },
+        where: [{ createdBy: email }, { createdBy: userId }],
+      }),
+    ]);
 
-  const unified: any[] = [];
-  const makeKey = (source: string, id: number) => `${source}-${id}`;
+    const unified: any[] = [];
+    const makeKey = (source: string, id: number) => `${source}-${id}`;
 
-  const mapLeads = (leads: any[], source: string, defaultCampaignName: string) => {
-    leads.forEach((l) => {
-      if (!l.id) return; // safety
+    const mapLeads = (leads: any[], source: string, defaultCampaignName: string) => {
+      leads.forEach((l) => {
+        if (!l.id) return; // safety
 
-      unified.push({
-        id: Number(l.id),
-        name: l.name || '[No Name]',
-        email: l.email || null,
-        phone: l.phone || null,
-        gclid: (l).gclid || null,
-        externalLeadId: (l).externalLeadId || null,
-        source,
-        campaignName: l.campaign?.name || defaultCampaignName || 'Uncategorized',
-        createdAt: l.createdAt 
-          ? new Date(l.createdAt).toISOString()
-          : new Date().toISOString(),
-        notesCount: 0, // Google Ads, Excel, etc. don't have notes yet
-        _reactKey: makeKey(source, l.id),
+        unified.push({
+          id: Number(l.id),
+          name: l.name || '[No Name]',
+          email: l.email || null,
+          phone: l.phone || null,
+          gclid: (l).gclid || null,
+          externalLeadId: (l).externalLeadId || null,
+          source,
+          campaignName: l.campaign?.name || defaultCampaignName || 'Uncategorized',
+          createdAt: l.createdAt
+            ? new Date(l.createdAt).toISOString()
+            : new Date().toISOString(),
+          notesCount: 0, // Google Ads, Excel, etc. don't have notes yet
+          _reactKey: makeKey(source, l.id),
+        });
       });
-    });
-  };
+    };
 
-  mapLeads(manual, 'manual', 'Manual Entry');
-  mapLeads(meta, 'meta', 'Meta Ads');
-  mapLeads(gads, 'google_ads', 'Google Ads');
-  mapLeads(gform, 'google_form', 'Google Form');
-  mapLeads(excel, 'excel_import', 'Excel Import');
+    mapLeads(manual, 'manual', 'Manual Entry');
+    mapLeads(meta, 'meta', 'Meta Ads');
+    mapLeads(gads, 'google_ads', 'Google Ads');
+    mapLeads(gform, 'google_form', 'Google Form');
+    mapLeads(excel, 'excel_import', 'Excel Import');
 
-  // Sort by newest first
-  unified.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    // Sort by newest first
+    unified.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  return {
-    success: true,
-    data: unified,
-    total: unified.length,
-  };}
+    return {
+      success: true,
+      data: unified,
+      total: unified.length,
+    };
+  }
 
 
 
@@ -380,7 +381,20 @@ export class LeadsService {
 
   async findLeadById(tenantKey: string, leadId: number, source: string) {
     const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
-    return ds.getRepository(Lead).findOne({ where: { id: leadId, source } });
+
+    // Route to the correct entity based on source
+    switch (source) {
+      case 'meta':
+        return ds.getRepository(MetaLead).findOne({ where: { id: leadId } });
+      case 'google_ads':
+        return ds.getRepository(GoogleAdsLead).findOne({ where: { id: leadId } });
+      case 'google_form':
+        return ds.getRepository(GoogleFormLead).findOne({ where: { id: leadId } });
+      case 'manual':
+      case 'excel_import':
+      default:
+        return ds.getRepository(Lead).findOne({ where: { id: leadId, source } });
+    }
   }
 
   async findLeadByPhone(tenantKey: string, phone: string) {

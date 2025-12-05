@@ -21,6 +21,8 @@ import { Conversation } from 'src/conversation/entities/conversation.entity';
 import { AgentAssignmentService } from 'src/agent-assignment/agent-assignment.service';
 import { Lead } from 'src/lead_management/leads/entities/lead.entity';
 import { Message } from 'src/message/entities/message.entity';
+import { User } from 'src/user/entities/user.entity';
+import { MetaConnection } from 'src/lead_management/facebook/entities/meta-connection.entity';
 
 @Injectable()
 export class TeamInboxService {
@@ -33,7 +35,7 @@ export class TeamInboxService {
     private whatsAppService: WhatsAppService,
     private messageGateway: MessageGateway,
     private agentAssignmentService: AgentAssignmentService,
-  ) {}
+  ) { }
 
   private async getRepos(dataSource: DataSource) {
     return {
@@ -142,78 +144,108 @@ export class TeamInboxService {
   }
 
   // src/team-inbox/team-inbox.service.ts
-async send(tenantKey: string, dto: CreateMessageDto, userId: string, email: string) {
-  const convResult = await this.conversationService.findOne(tenantKey, dto.conversation_id, userId, email);
-  const conv = convResult.data;
-  if (!conv) throw new NotFoundException('Conversation not found');
+  async send(tenantKey: string, dto: CreateMessageDto, userId: string, email: string) {
+    const convResult = await this.conversationService.findOne(tenantKey, dto.conversation_id, userId, email);
+    const conv = convResult.data;
+    if (!conv) throw new NotFoundException('Conversation not found');
 
-  const user = await this.businessUserService.findById(tenantKey, userId);
-  if (!user) throw new NotFoundException('User not found');
+    let user: any = await this.businessUserService.findById(tenantKey, userId);
 
-  if (user.role.name !== 'business' && conv.assigned_agent_id !== userId) {
-    throw new BadRequestException('Not authorized');
-  }
-
-  dto.sender_user_id = userId;
-  let whatsappMessageId: string | undefined;
-
-  try {
-    // TEXT MESSAGE
-    if (dto.type === 'text' && dto.content?.trim()) {
-      if (dto.parent_message_id) {
-        const parent = (await this.messageService.findOne(tenantKey, dto.parent_message_id, userId, email)).data;
-        whatsappMessageId = await this.whatsAppService.sendReplyMessage(
-          conv.phone_number,
-          dto.content,
-          parent.whatsapp_message_id,
-        );
-      } else {
-        whatsappMessageId = await this.whatsAppService.sendTextMessage(conv.phone_number, dto.content);
+    // Fallback: Check Master DB for Business Owner
+    if (!user) {
+      const masterDs = this.dbManager.getMasterDataSource();
+      const masterUser = await masterDs.getRepository(User).findOne({
+        where: { id: userId, tenantKey },
+        relations: ['role'],
+      });
+      if (masterUser) {
+        user = masterUser;
       }
     }
 
-    // MEDIA MESSAGE — ONLY SEND IF media_url EXISTS (i.e. already uploaded)
-    else if (['image', 'video', 'document', 'audio'].includes(dto.type!) && dto.media_url) {
-      // This case happens when forwarding/sharing already-uploaded media
-      // Extract media ID from URL or re-upload if needed
-      // For now, skip WhatsApp send — it was already sent during upload
-      whatsappMessageId = 'already_sent_via_upload';
+    if (!user) throw new NotFoundException('User not found');
+
+    if (user.role.name !== 'business' && conv.assigned_agent_id !== userId) {
+      throw new BadRequestException('Not authorized');
     }
 
-    // MEDIA PLACEHOLDER → DO NOT SEND TO WHATSAPP HERE
-    // The actual send happens in MessageService.upload() after file is uploaded
-    else if (['image', 'video', 'document', 'audio'].includes(dto.type!) && !dto.media_url) {
-      // This is a placeholder for file upload → do nothing
-      whatsappMessageId = undefined;
+    dto.sender_user_id = userId;
+    let whatsappMessageId: string | undefined;
+
+    try {
+      // Fetch WhatsApp credentials from MetaConnection
+      const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+      const metaConnRepo = ds.getRepository(MetaConnection);
+      const metaConn = await metaConnRepo.findOne({
+        where: { phoneNumberId: conv.business_phone_number_id }
+      });
+
+      if (!metaConn) {
+        throw new NotFoundException('WhatsApp connection not found for this conversation. Please connect your WhatsApp Business account.');
+      }
+
+      const opts = {
+        phoneNumberId: metaConn.phoneNumberId,
+        accessToken: metaConn.accessToken
+      };
+
+      // TEXT MESSAGE
+      if (dto.type === 'text' && dto.content?.trim()) {
+        if (dto.parent_message_id) {
+          const parent = (await this.messageService.findOne(tenantKey, dto.parent_message_id, userId, email)).data;
+          whatsappMessageId = await this.whatsAppService.sendReplyMessage(
+            conv.phone_number,
+            dto.content,
+            parent.whatsapp_message_id,
+            opts
+          );
+        } else {
+          whatsappMessageId = await this.whatsAppService.sendTextMessage(conv.phone_number, dto.content, opts);
+        }
+      }
+
+      // MEDIA MESSAGE — ONLY SEND IF media_url EXISTS (i.e. already uploaded)
+      else if (['image', 'video', 'document', 'audio'].includes(dto.type!) && dto.media_url) {
+        // This case happens when forwarding/sharing already-uploaded media
+        // Extract media ID from URL or re-upload if needed
+        // For now, skip WhatsApp send — it was already sent during upload
+        whatsappMessageId = 'already_sent_via_upload';
+      }
+
+      // MEDIA PLACEHOLDER → DO NOT SEND TO WHATSAPP HERE
+      // The actual send happens in MessageService.upload() after file is uploaded
+      else if (['image', 'video', 'document', 'audio'].includes(dto.type!) && !dto.media_url) {
+        // This is a placeholder for file upload → do nothing
+        whatsappMessageId = undefined;
+      }
+
+      else {
+        throw new BadRequestException('Invalid message: missing content or media');
+      }
+
+      // Save message (with or without whatsapp_message_id)
+      const savedMessage = await this.messageService.create(
+        tenantKey,
+        dto,
+        userId,
+        email,
+        whatsappMessageId, // may be undefined → OK
+      );
+
+      // Only emit if not a placeholder
+      if (whatsappMessageId && whatsappMessageId !== 'already_sent_via_upload') {
+        this.messageGateway.emitNewMessage(savedMessage.data, dto.conversation_id);
+      }
+
+      return savedMessage;
+    } catch (err: any) {
+      console.error('Failed to send message:', err);
+      throw new HttpException(
+        err.response?.data?.error?.message || err.message || 'Failed to send',
+        HttpStatus.BAD_GATEWAY,
+      );
     }
-
-    else {
-      throw new BadRequestException('Invalid message: missing content or media');
-    }
-
-    // Save message (with or without whatsapp_message_id)
-    const savedMessage = await this.messageService.create(
-      tenantKey,
-      dto,
-      userId,
-      email,
-      whatsappMessageId, // may be undefined → OK
-    );
-
-    // Only emit if not a placeholder
-    if (whatsappMessageId && whatsappMessageId !== 'already_sent_via_upload') {
-      this.messageGateway.emitNewMessage(savedMessage.data, dto.conversation_id);
-    }
-
-    return savedMessage;
-  } catch (err: any) {
-    console.error('Failed to send message:', err);
-    throw new HttpException(
-      err.response?.data?.error?.message || err.message || 'Failed to send',
-      HttpStatus.BAD_GATEWAY,
-    );
   }
-}
 
   async getAnalytics(tenantKey: string, userId: string, email: string) {
     const user = await this.businessUserService.findById(tenantKey, userId);

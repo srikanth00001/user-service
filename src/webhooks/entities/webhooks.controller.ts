@@ -179,6 +179,6 @@ export class WebhookController {
     }
 
     // 4) FINAL FALLBACK
-    return process.env.DEFAULT_TENANT_KEY || 'amazon_com';
+    return process.env.DEFAULT_TENANT_KEY || 'amazomn_com';
   }
 }

@@ -9,28 +9,24 @@ import { Readable } from 'stream';
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
 
-  private readonly API_VERSION = 'v20.0'; // Meta auto-upgrades safely
-  private readonly defaultPhoneNumberId = '677562115441844';
-  private readonly defaultAccessToken = 'EAAQZAtXAOD0gBQDAe7pr4VXyFGlQ5pZAUxGjqGJcyTn5kKZBTdXDWHYPqxZAVrQZBXSN6acP83O05xtfYexN284mfgZC1Y4DWlwS9xovlyrxmpHQHYilGbZBEq7zUCgWZCJs5UFpwLzl04kUhPQ1pS1lnw0u3b1l54sWNoiX63iNFQwdcQZCqen4inEyIc2cOsdXCs9J3AdB01mWTlA9Y7jrbXr1vj4WSkgbhCFP5MZAnrzZCZBCdMn7h83kMbGXI6SMG8pBD1SDuLgZAxJrwLZCRPtZBdMxj3c';
+  private readonly API_VERSION = 'v20.0';
 
   private get baseUrl() {
     return `https://graph.facebook.com/${this.API_VERSION}`;
   }
 
-  private getHeaders(contentType = 'application/json', overrideAccessToken?: string) {
-    const token = overrideAccessToken || this.defaultAccessToken;
+  private getHeaders(contentType = 'application/json', accessToken: string) {
     return {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${accessToken}`,
       'Content-Type': contentType,
     };
   }
 
-  private getPhoneNumberId(overridePhoneNumberId?: string) {
-    return overridePhoneNumberId || this.defaultPhoneNumberId;
+  private getPhoneNumberId(phoneNumberId: string) {
+    return phoneNumberId;
   }
 
-  // TEXT MESSAGE – 100% WORKING ON v23+
-  async sendTextMessage(to: string, content: string, opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
+  async sendTextMessage(to: string, content: string, opts: { phoneNumberId: string; accessToken: string }): Promise<string> {
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -45,7 +41,7 @@ export class WhatsAppService {
   }
 
   // REPLY MESSAGE
-  async sendReplyMessage(to: string, content: string, replyToMessageId: string, opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
+  async sendReplyMessage(to: string, content: string, replyToMessageId: string, opts: { phoneNumberId: string; accessToken: string }): Promise<string> {
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -66,11 +62,11 @@ export class WhatsAppService {
     mediaId: string,
     type: 'image' | 'video' | 'document' | 'audio',
     caption?: string,
-    opts?: { phoneNumberId?: string; accessToken?: string },
+    opts: { phoneNumberId: string; accessToken: string } = { phoneNumberId: '', accessToken: '' },
   ): Promise<string> {
     const payload: any = {
       messaging_product: 'whatsapp',
-      recipient_type: 'individual',
+      recipient_type: 'whatsapp',
       to: this.formatPhoneNumber(to),
       type,
     };
@@ -82,7 +78,7 @@ export class WhatsAppService {
   }
 
   // UPLOAD FROM FILE PATH ← THIS IS THE ONE YOU NEED FOR MessageService.upload()
-  async uploadMedia(filePath: string, mediaType: 'image' | 'video' | 'document' | 'audio', opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
+  async uploadMedia(filePath: string, mediaType: 'image' | 'video' | 'document' | 'audio', opts: { phoneNumberId: string; accessToken: string }): Promise<string> {
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
     form.append('type', this.getMimeType(mediaType));
@@ -91,8 +87,8 @@ export class WhatsAppService {
       contentType: this.getMimeType(mediaType),
     });
 
-    const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts?.phoneNumberId)}/media`, form, {
-      headers: { ...this.getHeaders(undefined, opts?.accessToken), ...form.getHeaders() },
+    const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts.phoneNumberId)}/media`, form, {
+      headers: { ...this.getHeaders(undefined, opts.accessToken), ...form.getHeaders() },
       timeout: 90_000,
       maxBodyLength: Infinity,
     });
@@ -105,7 +101,7 @@ export class WhatsAppService {
     buffer: Buffer,
     filename: string,
     mediaType: 'image' | 'video' | 'document' | 'audio',
-    opts?: { phoneNumberId?: string; accessToken?: string },
+    opts: { phoneNumberId: string; accessToken: string },
   ): Promise<string> {
     const form = new FormData();
     form.append('messaging_product', 'whatsapp');
@@ -119,8 +115,8 @@ export class WhatsAppService {
       contentType: this.getMimeType(mediaType),
     });
 
-    const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts?.phoneNumberId)}/media`, form, {
-      headers: { ...this.getHeaders(undefined, opts?.accessToken), ...form.getHeaders() },
+    const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts.phoneNumberId)}/media`, form, {
+      headers: { ...this.getHeaders(undefined, opts.accessToken), ...form.getHeaders() },
       timeout: 90_000,
       maxBodyLength: Infinity,
     });
@@ -129,68 +125,68 @@ export class WhatsAppService {
   }
 
   async sendReactionMessage(
-  phoneNumber: string,
-  messageId: string,
-  emoji: string,
-  opts?: { phoneNumberId?: string; accessToken?: string },
-): Promise<string> {  // return message ID for consistency
-  try {
-    const formattedPhone = this.formatPhoneNumber(phoneNumber);
+    phoneNumber: string,
+    messageId: string,
+    emoji: string,
+    opts: { phoneNumberId: string; accessToken: string },
+  ): Promise<string> {  // return message ID for consistency
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-    if (!messageId.startsWith('wamid.')) {
-      throw new Error(`Invalid WhatsApp message ID: ${messageId}`);
+      if (!messageId.startsWith('wamid.')) {
+        throw new Error(`Invalid WhatsApp message ID: ${messageId}`);
+      }
+
+      // WhatsApp only supports single emoji (no skin tones in some cases)
+      // But this regex allows all commonly supported ones
+      const validEmoji = emoji.trim();
+      if (!validEmoji || validEmoji.length > 2) {
+        throw new Error(`Invalid emoji: ${validEmoji}`);
+      }
+
+      const payload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: formattedPhone,
+        type: 'reaction',
+        reaction: {
+          message_id: messageId,
+          emoji: validEmoji,
+        },
+      };
+
+      this.logger.log('Sending reaction to WhatsApp:', { to: formattedPhone, messageId, emoji });
+
+      // ← CRITICAL: Use the same sendPayload() as text/media messages
+      const result = await this.sendPayload(payload, opts);
+
+      this.logger.log('Reaction sent successfully:', result);
+      return result;
+
+    } catch (error: any) {
+      this.logger.error('Failed to send reaction to WhatsApp', {
+        phoneNumber,
+        messageId,
+        emoji,
+        error: error.response?.data || error.message,
+        stack: error.stack,
+      });
+      throw error;
     }
-
-    // WhatsApp only supports single emoji (no skin tones in some cases)
-    // But this regex allows all commonly supported ones
-    const validEmoji = emoji.trim();
-    if (!validEmoji || validEmoji.length > 2) {
-      throw new Error(`Invalid emoji: ${validEmoji}`);
-    }
-
-    const payload = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: formattedPhone,
-      type: 'reaction',
-      reaction: {
-        message_id: messageId,
-        emoji: validEmoji,
-      },
-    };
-
-    this.logger.log('Sending reaction to WhatsApp:', { to: formattedPhone, messageId, emoji });
-
-    // ← CRITICAL: Use the same sendPayload() as text/media messages
-    const result = await this.sendPayload(payload, opts);
-
-    this.logger.log('Reaction sent successfully:', result);
-    return result;
-
-  } catch (error: any) {
-    this.logger.error('Failed to send reaction to WhatsApp', {
-      phoneNumber,
-      messageId,
-      emoji,
-      error: error.response?.data || error.message,
-      stack: error.stack,
-    });
-    throw error;
   }
-}
 
-  async getMediaUrl(mediaId: string, opts?: { accessToken?: string }): Promise<string> {
+  async getMediaUrl(mediaId: string, opts: { accessToken: string }): Promise<string> {
     const res = await axios.get(`${this.baseUrl}/${mediaId}`, {
-      headers: this.getHeaders(undefined, opts?.accessToken),
+      headers: this.getHeaders(undefined, opts.accessToken),
       params: { fields: 'url' },
     });
     return res.data.url;
   }
 
-  private async sendPayload(payload: any, opts?: { phoneNumberId?: string; accessToken?: string }): Promise<string> {
+  private async sendPayload(payload: any, opts: { phoneNumberId: string; accessToken: string }): Promise<string> {
     try {
-      const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts?.phoneNumberId)}/messages`, payload, {
-        headers: this.getHeaders(undefined, opts?.accessToken),
+      const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts.phoneNumberId)}/messages`, payload, {
+        headers: this.getHeaders(undefined, opts.accessToken),
         timeout: 30_000,
       });
       return res.data.messages?.[0]?.id || 'sent';
@@ -213,13 +209,13 @@ export class WhatsAppService {
   }
 
   private getMimeType(type: 'image' | 'video' | 'document' | 'audio'): string {
-  const map = {
-    image: 'image/jpeg',
-    video: 'video/mp4',
-    document: 'application/pdf',
-    audio: 'audio/mpeg',   // ✔ fix here
-  } as const;
-  return map[type];
-}
+    const map = {
+      image: 'image/jpeg',
+      video: 'video/mp4',
+      document: 'application/pdf',
+      audio: 'audio/mpeg',   // ✔ fix here
+    } as const;
+    return map[type];
+  }
 
 }

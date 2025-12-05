@@ -50,9 +50,9 @@ export class DatabaseManager implements OnModuleInit {
     synchronize: true,
     migrations: [__dirname + '/migrations/*{.ts,.js}'],
     logging: false,
-    entities: [Lead, Note, Temp, Campaign,BusinessUser, BusinessRole, BusinessPermission,MetaLead,ExcelLead,
-  GoogleAdsLead,
-  GoogleFormLead,Conversation,Message,AgentAssignment,FacebookPage,MetaApp,MetaConnection],
+    entities: [Lead, Note, Temp, Campaign, BusinessUser, BusinessRole, BusinessPermission, MetaLead, ExcelLead,
+      GoogleAdsLead,
+      GoogleFormLead, Conversation, Message, AgentAssignment, FacebookPage, MetaApp, MetaConnection],
   };
 
   private masterDataSource!: DataSource;
@@ -70,8 +70,8 @@ export class DatabaseManager implements OnModuleInit {
     if (!this.masterDataSource) {
       const masterOpts: PostgresConnectionOptions = {
         ...this.baseConfig,
-        database: 'postgres',
-        entities: [User, Role,PhoneTenantMap],
+        database: 'lead-crm',
+        entities: [User, Role, PhoneTenantMap],
       };
       this.masterDataSource = new DataSource(masterOpts);
       await this.masterDataSource.initialize();
@@ -136,21 +136,21 @@ export class DatabaseManager implements OnModuleInit {
       database: dbName,
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       entities: [
-    Lead,
-    Note,
-    Temp,
-    Campaign,
-    BusinessUser,
-    BusinessRole,
-    BusinessPermission,
-    MetaLead,
-    ExcelLead,
-  GoogleAdsLead,
-  GoogleFormLead,
-  Conversation,Message,AgentAssignment,
-  FacebookPage,
-  MetaApp,MetaConnection
-  ], 
+        Lead,
+        Note,
+        Temp,
+        Campaign,
+        BusinessUser,
+        BusinessRole,
+        BusinessPermission,
+        MetaLead,
+        ExcelLead,
+        GoogleAdsLead,
+        GoogleFormLead,
+        Conversation, Message, AgentAssignment,
+        FacebookPage,
+        MetaApp, MetaConnection
+      ],
     };
 
     const dataSource = new DataSource(config);
@@ -242,11 +242,11 @@ export class DatabaseManager implements OnModuleInit {
       // 2. Count distinct users that already have at least one lead
       const dataSource = this.connections.get(tenantKey)!.dataSource;
       const userCount = await dataSource
-  .createQueryBuilder()
-  .select('COUNT(DISTINCT lead.created_by)', 'cnt')
-  .from(Lead, 'lead')
-  .getRawOne()
-  .then(r => Number(r.cnt ?? 0));
+        .createQueryBuilder()
+        .select('COUNT(DISTINCT lead.created_by)', 'cnt')
+        .from(Lead, 'lead')
+        .getRawOne()
+        .then(r => Number(r.cnt ?? 0));
 
 
       // 3. Room for a new user → assign this DB

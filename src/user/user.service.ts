@@ -22,7 +22,7 @@ export class UserService {
     @InjectRepository(Role)
     private roleRepository: Repository<Role>,
     private readonly dbManager: DatabaseManager,
-  ) {}
+  ) { }
 
   // 🔹 Create new user in main (lead-crm) DB
   async createUser(userData: any) {
@@ -190,6 +190,30 @@ export class UserService {
       console.warn(`Error fetching business user for ${email} in ${tenantKey}: ${error.message}`);
       return null;
     }
+  }
+
+  // 🔹 Find business user by ID inside tenant DB  
+  async findBusinessUserById(id: string): Promise<BusinessUser | null> {
+    // We need to iterate through all tenant connections to find the user
+    // This is because we don't know which tenant the user belongs to from just the ID
+    const connections = Array.from(this.dbManager['connections'].values());
+
+    for (const { dataSource } of connections) {
+      try {
+        const businessUserRepo = dataSource.getRepository(BusinessUser);
+        const user = await businessUserRepo.findOne({
+          where: { id },
+          relations: ['role'],
+        });
+
+        if (user) return user;
+      } catch (error) {
+        // Skip this tenant if there's an error
+        continue;
+      }
+    }
+
+    return null;
   }
 
   // 🔹 Seed tenant DB (roles + permissions)
