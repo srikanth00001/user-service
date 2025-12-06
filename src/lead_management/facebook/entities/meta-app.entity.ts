@@ -21,6 +21,9 @@ export class MetaApp {
   @Column({ default: true })
   active: boolean;
 
+  @Column({ nullable: true })
+  createdBy?: string;
+
   @CreateDateColumn()
   createdAt: Date;
 }

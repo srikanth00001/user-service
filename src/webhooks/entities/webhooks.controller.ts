@@ -27,7 +27,7 @@ export class WebhookController {
   constructor(
     private readonly teamInboxService: TeamInboxService,
     private readonly dbManager: DatabaseManager,
-  ) {}
+  ) { }
 
   // ───────────────────────────────────────────────
   // VERIFY WEBHOOK
@@ -154,7 +154,7 @@ export class WebhookController {
           const repo = conn.dataSource.getRepository(MetaConnection);
           const found = await repo.findOne({ where: { phoneNumberId, active: true } });
           if (found) return tenantKey;
-        } catch {}
+        } catch { }
       }
       // Env-based static map as secondary
       const mapRaw = process.env.WHATSAPP_TENANT_MAP;
@@ -162,7 +162,7 @@ export class WebhookController {
         try {
           const map = JSON.parse(mapRaw);
           if (map[phoneNumberId]) return map[phoneNumberId];
-        } catch {}
+        } catch { }
       }
     }
 
@@ -175,7 +175,7 @@ export class WebhookController {
         const repo = conn.dataSource.getRepository(Lead);
         const found = await repo.findOne({ where: { phone } });
         if (found) return tenantKey;
-      } catch {}
+      } catch { }
     }
 
     // 4) FINAL FALLBACK

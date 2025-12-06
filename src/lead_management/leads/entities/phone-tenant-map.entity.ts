@@ -9,6 +9,9 @@ export class PhoneTenantMap {
   @Column()
   tenantKey: string;
 
+  @Column({ nullable: true })
+  userId: string;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   updatedAt: Date;
 }

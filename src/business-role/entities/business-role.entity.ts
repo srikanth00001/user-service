@@ -20,6 +20,9 @@ export class BusinessRole {
   @Column()
   tenantKey: string;
 
+  @Column({ nullable: true })
+  createdBy?: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

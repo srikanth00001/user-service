@@ -9,7 +9,7 @@ import { Constants } from 'src/common/constants';
 @UseGuards(JwtAuthGuard)
 @Controller({ path: 'conversations', version: Constants.API_VERSION })
 export class ConversationController {
-  constructor(private readonly conversationService: ConversationService) {}
+  constructor(private readonly conversationService: ConversationService) { }
 
   @Post()
   async create(@Body() createConversationDto: CreateConversationDto, @Req() req: any) {
@@ -56,11 +56,11 @@ export class ConversationController {
   async filterByStatus(@Param('status') status: string, @Req() req: any) {
     const { userId, email, tenantKey } = this.getUser(req);
     return this.conversationService.filterByStatus(
-  tenantKey,
-  status as 'open' | 'closed' | 'pending',
-  userId,
-  email,
-);
+      tenantKey,
+      status as 'open' | 'closed' | 'pending',
+      userId,
+      email,
+    );
   }
 
   @Get('unread-count')
@@ -86,7 +86,7 @@ export class ConversationController {
 
   private getUser(req: any) {
     return {
-      userId: req.user?.sub || req.user?.id,
+      userId: req.user?.userId || req.user?.sub || req.user?.id,
       email: req.user?.email,
       tenantKey: req.user?.tenantKey,
       role: req.user?.role,

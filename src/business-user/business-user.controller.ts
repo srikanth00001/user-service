@@ -21,11 +21,11 @@ import { Constants } from '../common/constants';
 @Controller({ path: 'business-users', version: Constants.API_VERSION })
 @UseGuards(JwtAuthGuard)
 export class BusinessUserController {
-  constructor(private readonly dbManager: DatabaseManager) {}
+  constructor(private readonly dbManager: DatabaseManager) { }
 
   private getUser(req: any) {
     return {
-      userId: req.user?.sub,
+      userId: req.user?.userId || req.user?.sub || req.user?.id,
       email: req.user?.email,
       tenantKey: req.user?.tenantKey,
     };

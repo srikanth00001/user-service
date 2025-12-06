@@ -8,7 +8,7 @@ import * as crypto from 'crypto';
 export class GoogleAdsService {
   private readonly logger = new Logger(GoogleAdsService.name);
 
-  constructor(private readonly dbManager: DatabaseManager) {}
+  constructor(private readonly dbManager: DatabaseManager) { }
 
   async handleWebhook(
     payload: any,
@@ -89,7 +89,7 @@ export class GoogleAdsService {
         googleCampaignId: payload.campaign_id || null,
         adGroupId: payload.adgroup_id || null,
         creativeId: payload.creative_id || null,
-        createdBy: email,
+        createdBy: userId,
         campaign,
       });
 

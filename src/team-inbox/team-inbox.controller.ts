@@ -13,7 +13,7 @@ export class TeamInboxController {
   constructor(
     private readonly teamInboxService: TeamInboxService,
     private readonly AgentAssignmentService: AgentAssignmentService, // ← NEW
-  ) {}
+  ) { }
 
   @Get('conversations')
   async getConversations(@Req() req: any) {
@@ -48,7 +48,7 @@ export class TeamInboxController {
 
   private getUser(req: any) {
     return {
-      userId: req.user?.sub || req.user?.id,
+      userId: req.user?.userId || req.user?.sub || req.user?.id,
       email: req.user?.email,
       tenantKey: req.user?.tenantKey,
       role: req.user?.role,

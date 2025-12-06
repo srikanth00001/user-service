@@ -34,137 +34,156 @@ export class FacebookController {
   constructor(
     private readonly facebookService: FacebookService,
     private readonly facebookPageService: FacebookPageService,
-  ) {}
+  ) { }
 
   @Post('oauth-callback')
   async oauthCallback(@Body() body: OAuthCallbackDto, @Req() req: any) {
     if (!body.code || !body.userId) throw new Error('Missing code or userId');
     const tenantKey = req.user?.tenantKey;
-    return this.facebookService.handleOAuthCallback(body.code, body.userId, tenantKey);
+    const email = req.user?.email || '';
+    return this.facebookService.handleOAuthCallback(body.code, body.userId, tenantKey, email);
   }
 
   @Post('app-config')
-@UseGuards(JwtAuthGuard)
-async saveMetaAppConfig(@Req() req: any, @Body() body: {
-  appId: string;
-  appSecret: string;
-  redirectUri: string;
-}) {
-  const tenantKey = req.user.tenantKey;
-  return this.facebookService.saveMetaAppConfig(tenantKey, body);
-}
+  @UseGuards(JwtAuthGuard)
+  async saveMetaAppConfig(@Req() req: any, @Body() body: {
+    appId: string;
+    appSecret: string;
+    redirectUri: string;
+  }) {
+    const tenantKey = req.user.tenantKey;
+    return this.facebookService.saveMetaAppConfig(tenantKey, body);
+  }
 
-@Get('app-config')
-@UseGuards(JwtAuthGuard)
-async getMetaAppConfig(@Req() req: any) {
-  const tenantKey = req.user.tenantKey;
-  return this.facebookService.getMetaAppConfig(tenantKey);
-}
+  @Get('app-config')
+  @UseGuards(JwtAuthGuard)
+  async getMetaAppConfig(@Req() req: any) {
+    const tenantKey = req.user.tenantKey;
+    return this.facebookService.getMetaAppConfig(tenantKey);
+  }
 
   @Get('oauth-callback')
-async oauthCallbackGet(
-  @Query('code') code: string,
-  @Query('state') state: string,
-  @Res() res: Response,
-) {
-  if (!code || !state) {
-    return res.status(400).send('Missing code or state');
+  async oauthCallbackGet(
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Res() res: Response,
+  ) {
+    if (!code || !state) {
+      return res.status(400).send('Missing code or state');
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(decodeURIComponent(state));
+    } catch {
+      return res.status(400).send('Invalid state');
+    }
+
+    // THIS IS THE KEY FIX
+    if (payload.flow === 'whatsapp') {
+      // WhatsApp flow → pass code & state to frontend
+      const frontendUrl = `http://localhost:3003/meta-leads?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+      console.log('WhatsApp flow → redirecting to frontend with params');
+      return res.redirect(frontendUrl);
+    }
+
+    // Default = Pages flow → handle on backend (old working way)
+    console.log('Pages flow → handling on backend');
+    const { userId, tenantKey } = payload;
+
+    // Get email from JWT since it's not in payload
+    const email = (res.req as any).user?.email || '';
+
+    await this.facebookService.handleOAuthCallback(code, userId, tenantKey, email);
+
+    // Clean redirect (no params)
+    return res.redirect('http://localhost:3003/meta-leads');
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(decodeURIComponent(state));
-  } catch {
-    return res.status(400).send('Invalid state');
+  @Post('whatsapp-oauth-callback')
+  async whatsappOAuthCallback(@Body() body: { code: string; userId: string; tenantKey: string }) {
+    const { code, userId, tenantKey } = body;
+
+    if (!code || !userId || !tenantKey) {
+      throw new Error('Missing code, userId or tenantKey');
+    }
+
+    // Now we have everything we need from the frontend via state → no need for req.user
+    return this.facebookService.handleWhatsAppOAuthCallback(code, userId, tenantKey);
   }
 
-  // THIS IS THE KEY FIX
-  if (payload.flow === 'whatsapp') {
-    // WhatsApp flow → pass code & state to frontend
-    const frontendUrl = `http://localhost:3003/meta-leads?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
-    console.log('WhatsApp flow → redirecting to frontend with params');
-    return res.redirect(frontendUrl);
-  }
-
-  // Default = Pages flow → handle on backend (old working way)
-  console.log('Pages flow → handling on backend');
-  const { userId, tenantKey } = payload;
-  await this.facebookService.handleOAuthCallback(code, userId, tenantKey);
-
-  // Clean redirect (no params)
-  return res.redirect('http://localhost:3003/meta-leads');
-}
-
-@Post('whatsapp-oauth-callback')
-async whatsappOAuthCallback(@Body() body: { code: string; userId: string; tenantKey: string }) {
-  const { code, userId, tenantKey } = body;
-
-  if (!code || !userId || !tenantKey) {
-    throw new Error('Missing code, userId or tenantKey');
-  }
-
-  // Now we have everything we need from the frontend via state → no need for req.user
-  return this.facebookService.handleWhatsAppOAuthCallback(code, userId, tenantKey);
-}
-
- @Post('connect-whatsapp')
-async connectWhatsAppNumber(
-  @Body()
-  body: {
-    phoneNumberId: string;
-    displayPhoneNumber: string;
-    wabaId: string;
-    pageId: string;
-    pageName: string;
-    tenantKey: string;
-    userId: string;
-    longLivedToken: string;   // ← THIS WAS MISSING → NOW ADDED
-  },
-  @Req() req: any,
-) {
-  const tenantKey = body.tenantKey || req.user?.tenantKey;
-  const userId = body.userId || req.user?.userId;
-
-  if (!tenantKey) throw new BadRequestException('tenantKey is required');
-  if (!userId) throw new BadRequestException('userId is required');
-  if (!body.longLivedToken) throw new BadRequestException('longLivedToken is required');
-
-  const connection = await this.facebookService.saveWhatsAppConnection(
-    tenantKey,
-    userId,
-    {
-      phoneNumberId: body.phoneNumberId,
-      displayPhoneNumber: body.displayPhoneNumber,
-      wabaId: body.wabaId,
-      pageId: body.pageId,
-      pageName: body.pageName,
-      longLivedToken: body.longLivedToken, // ← NOW PASSED CORRECTLY
+  @Post('connect-whatsapp')
+  async connectWhatsAppNumber(
+    @Body()
+    body: {
+      phoneNumberId: string;
+      displayPhoneNumber: string;
+      wabaId: string;
+      pageId: string;
+      pageName: string;
+      tenantKey: string;
+      userId: string;
+      longLivedToken: string;   // ← THIS WAS MISSING → NOW ADDED
     },
-  );
+    @Req() req: any,
+  ) {
+    const tenantKey = body.tenantKey || req.user?.tenantKey;
+    const userId = body.userId || req.user?.userId;
 
-  return {
-    success: true,
-    message: 'WhatsApp number connected successfully!',
-    data: connection,
-  };
-}
+    if (!tenantKey) throw new BadRequestException('tenantKey is required');
+    if (!userId) throw new BadRequestException('userId is required');
+    if (!body.longLivedToken) throw new BadRequestException('longLivedToken is required');
+
+    const connection = await this.facebookService.saveWhatsAppConnection(
+      tenantKey,
+      userId,
+      {
+        phoneNumberId: body.phoneNumberId,
+        displayPhoneNumber: body.displayPhoneNumber,
+        wabaId: body.wabaId,
+        pageId: body.pageId,
+        pageName: body.pageName,
+        longLivedToken: body.longLivedToken, // ← NOW PASSED CORRECTLY
+      },
+    );
+
+    return {
+      success: true,
+      message: 'WhatsApp number connected successfully!',
+      data: connection,
+    };
+  }
 
   @Get('whatsapp-connections')
-@UseGuards(JwtAuthGuard)
-async getWhatsAppConnections(@Req() req: any) {
-  const tenantKey = req.user.tenantKey;
+  @UseGuards(JwtAuthGuard)
+  async getWhatsAppConnections(@Req() req: any) {
+    const userId = req.user?.sub || req.user?.id;
+    const email = req.user?.email;
+    let tenantKey = req.user.tenantKey;
 
-  // Use dbManager from service (already injected)
-  const dataSource = await this.facebookService['dbManager'].getOrCreateTenantConnection(tenantKey);
-  const repo = dataSource.getRepository(MetaConnection);
+    // For personal users (tenantKey = null), resolve their actual DB
+    if (!tenantKey) {
+      const { tenantKey: resolvedKey } = await this.facebookService['dbManager'].getConnectionForUser({
+        id: userId,
+        email
+      });
+      tenantKey = resolvedKey;
+      console.log('🔍 Resolved tenantKey for personal user:', tenantKey);
+    }
 
-  const connections = await repo.find({
-    where: { tenantKey, active: true },
-    order: { connectedAt: 'DESC' },
-  });
+    // Use dbManager from service (already injected)
+    const dataSource = await this.facebookService['dbManager'].getOrCreateTenantConnection(tenantKey);
+    const repo = dataSource.getRepository(MetaConnection);
 
-  return { success: true, data: connections };
-}
+    const connections = await repo.find({
+      where: { tenantKey, active: true },
+      order: { connectedAt: 'DESC' },
+    });
+
+    console.log(`📱 Found ${connections.length} WhatsApp connections for tenantKey: ${tenantKey}`);
+
+    return { success: true, data: connections };
+  }
 
 
   @UseGuards(JwtAuthGuard)
@@ -187,13 +206,13 @@ async getWhatsAppConnections(@Req() req: any) {
   }
 
   @UseGuards(JwtAuthGuard)
-@Get('page')
-async getConnectedPages(@Req() req: any) {
-  const userId = req.user?.sub || req.user?.id;
-  const tenantKey = req.user?.tenantKey;
-  const pages = await this.facebookPageService.getConnectedPages(String(userId), String(tenantKey));
-  return { success: true, data: pages }; // Now returns array
-}
+  @Get('page')
+  async getConnectedPages(@Req() req: any) {
+    const userId = req.user?.sub || req.user?.id;
+    const tenantKey = req.user?.tenantKey;
+    const pages = await this.facebookPageService.getConnectedPages(String(userId), String(tenantKey));
+    return { success: true, data: pages }; // Now returns array
+  }
 
   @Get('webhook')
   verifyWebhook(
@@ -206,12 +225,12 @@ async getConnectedPages(@Req() req: any) {
   }
 
   @UseGuards(JwtAuthGuard)
-@Delete('page/:pageId')
-async disconnectPage(@Param('pageId') pageId: string, @Req() req: any) {
-  const tenantKey = req.user.tenantKey;
-  await this.facebookPageService.disconnectPage(pageId, tenantKey);
-  return { success: true };
-}
+  @Delete('page/:pageId')
+  async disconnectPage(@Param('pageId') pageId: string, @Req() req: any) {
+    const tenantKey = req.user.tenantKey;
+    await this.facebookPageService.disconnectPage(pageId, tenantKey);
+    return { success: true };
+  }
 
   @Post('webhook')
   async webhook(@Body() payload: any) {

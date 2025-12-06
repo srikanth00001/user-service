@@ -13,6 +13,9 @@ export class BusinessPermission {
   @Column({ default: true })
   active: boolean;
 
+  @Column({ nullable: true })
+  createdBy?: string;
+
   @ManyToOne(() => BusinessRole, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'role_id' })
   role: BusinessRole;

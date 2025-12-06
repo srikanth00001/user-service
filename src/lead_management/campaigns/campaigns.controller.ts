@@ -19,10 +19,14 @@ import { Constants } from '../../common/constants';
 @UseGuards(JwtAuthGuard)
 @Controller({ path: 'campaigns', version: Constants.API_VERSION })
 export class CampaignsController {
-  constructor(private readonly campaignsService: CampaignsService) {}
+  constructor(private readonly campaignsService: CampaignsService) { }
 
   private getUser(req: any) {
-    return { id: req.user.sub, email: req.user.email, tenantKey: req.user.tenantKey };
+    return {
+      id: req.user?.userId || req.user?.sub || req.user?.id,
+      email: req.user?.email,
+      tenantKey: req.user?.tenantKey
+    };
   }
 
   @Post('create')

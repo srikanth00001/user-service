@@ -66,7 +66,7 @@ export class WhatsAppService {
   ): Promise<string> {
     const payload: any = {
       messaging_product: 'whatsapp',
-      recipient_type: 'whatsapp',
+      recipient_type: 'individual',
       to: this.formatPhoneNumber(to),
       type,
     };

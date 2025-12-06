@@ -14,8 +14,8 @@ export class MetaConnection {
   @Column({ name: 'connected_by_user_id' })
   connectedByUserId: string;
 
-@Column({ type: 'varchar', length: 50, nullable: true })
-businessManagerId: string;
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  businessManagerId: string;
 
 
   @Column({ name: 'waba_id' })
@@ -38,6 +38,9 @@ businessManagerId: string;
 
   @Column({ default: true })
   active: boolean;
+
+  @Column({ nullable: true })
+  createdBy?: string;
 
   @CreateDateColumn({ name: 'connected_at' })
   connectedAt: Date;

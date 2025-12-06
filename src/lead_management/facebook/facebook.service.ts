@@ -64,6 +64,7 @@ export class FacebookService {
       connection = repo.create({
         tenantKey,
         connectedByUserId: userId,
+        createdBy: userId,
         businessManagerId: '',
         wabaId: data.wabaId,
         phoneNumberId: data.phoneNumberId,
@@ -77,6 +78,10 @@ export class FacebookService {
     } else {
       connection.active = true;
       connection.accessToken = data.longLivedToken;
+      // Set createdBy if not already set
+      if (!connection.createdBy) {
+        connection.createdBy = userId;
+      }
     }
 
     await repo.save(connection);
@@ -87,7 +92,7 @@ export class FacebookService {
     // ─────────────────────────────────────────────────────────────────
     // NEW: Save to MASTER DB (PhoneTenantMap) for global webhook lookup
     // ─────────────────────────────────────────────────────────────────
-    console.log(`🔄 Attempting to save PhoneTenantMap: ${data.phoneNumberId} -> ${tenantKey}`);
+    console.log(`🔄 Attempting to save PhoneTenantMap: ${data.phoneNumberId} -> ${tenantKey} (userId: ${userId})`);
 
     const masterDs = this.dbManager.getMasterDataSource();
     if (!masterDs.isInitialized) {
@@ -103,21 +108,34 @@ export class FacebookService {
       mapEntry = mapRepo.create({
         phone: data.phoneNumberId,
         tenantKey,
+        userId,
       });
     } else {
       mapEntry.tenantKey = tenantKey; // Update if changed
+      mapEntry.userId = userId; // Update userId
     }
 
     await mapRepo.save(mapEntry);
-    console.log(`✅ Saved PhoneTenantMap: ${data.phoneNumberId} -> ${tenantKey}`);
+    console.log(`✅ Saved PhoneTenantMap: ${data.phoneNumberId} -> ${tenantKey} (userId: ${userId})`);
 
     return connection;
   }
 
-  async handleOAuthCallback(code: string, userId: string, tenantKey: string) {
+  async handleOAuthCallback(code: string, userId: string, tenantKey: string | null, email: string) {
     try {
       console.log('📌 OAuth Callback started for user:', userId);
-      const metaApp = await this.getMetaApp(tenantKey);
+
+      // For personal users (tenantKey = null), resolve their actual DB
+      let actualTenantKey: string;
+      if (!tenantKey) {
+        const { tenantKey: resolvedKey } = await this.dbManager.getConnectionForUser({ id: userId, email });
+        actualTenantKey = resolvedKey;
+        console.log('🔍 Resolved tenantKey for personal user:', actualTenantKey);
+      } else {
+        actualTenantKey = tenantKey;
+      }
+
+      const metaApp = await this.getMetaApp(actualTenantKey);
 
       // 1️⃣ Short-lived token
       const tokenRes = await firstValueFrom(
@@ -158,7 +176,7 @@ export class FacebookService {
       const savedPages: FacebookPage[] = [];
       for (const page of pages) {
         const saved = await this.facebookPageService.saveConnectedPage({
-          tenantKey,
+          tenantKey: actualTenantKey,
           userId,
           pageId: page.id,
           pageName: page.name,

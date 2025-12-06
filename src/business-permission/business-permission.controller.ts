@@ -6,17 +6,17 @@ import { CreateBusinessPermissionDto } from './dto/create-business-permission.dt
 @Controller('business-permissions')
 @UseGuards(JwtAuthGuard)
 export class BusinessPermissionController {
-  constructor(private readonly permService: BusinessPermissionService) {}
+  constructor(private readonly permService: BusinessPermissionService) { }
 
   @Post()
   async create(@Body() dto: CreateBusinessPermissionDto, @Request() req: any) {
-    const tenantKey = req.user.tenantKey;
+    const tenantKey = req.user?.tenantKey;
     return this.permService.create(dto.roleId, dto.permissions, tenantKey);
   }
 
   @Get()
   async getAll(@Request() req: any) {
-    const tenantKey = req.user.tenantKey;
+    const tenantKey = req.user?.tenantKey;
     return this.permService.getAll(tenantKey);
   }
 
@@ -26,7 +26,7 @@ export class BusinessPermissionController {
     @Body() dto: { permissions: Record<string, string[]> },
     @Request() req: any,
   ) {
-    const tenantKey = req.user.tenantKey;
+    const tenantKey = req.user?.tenantKey;
     return this.permService.update(roleId, dto.permissions, tenantKey);
   }
 }

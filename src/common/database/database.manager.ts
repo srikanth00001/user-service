@@ -78,6 +78,8 @@ export class DatabaseManager implements OnModuleInit {
     }
   }
 
+
+
   private async createInitialDigiwebspotDb() {
     await this.getOrCreateTenantConnection(`${this.PERSONAL_DB_PREFIX}_1`);
   }
@@ -87,6 +89,9 @@ export class DatabaseManager implements OnModuleInit {
   // --------------------------------------------------------------------
   private normalizeDbName(key: string): string {
     // PostgreSQL identifiers cannot contain '.' → replace with '_'
+    if (!key) {
+      throw new Error('tenantKey cannot be null or empty');
+    }
     return key.replace(/\./g, '_').toLowerCase();
   }
 

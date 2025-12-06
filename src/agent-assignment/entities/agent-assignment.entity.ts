@@ -7,7 +7,7 @@ export class AgentAssignment {
   id: number;
 
   @Column({ type: 'varchar', default: 'manual' })
-leadSource: string;
+  leadSource: string;
 
 
   @Column({ name: 'lead_id' })
@@ -18,6 +18,9 @@ leadSource: string;
 
   @Column({ nullable: true })
   assigned_by?: string;
+
+  @Column({ nullable: true })
+  createdBy?: string;
 
   @CreateDateColumn()
   created_at: Date;

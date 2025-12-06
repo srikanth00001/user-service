@@ -8,7 +8,7 @@ import * as crypto from 'crypto';
 export class GoogleFormService {
   private readonly logger = new Logger(GoogleFormService.name);
 
-  constructor(private readonly dbManager: DatabaseManager) {}
+  constructor(private readonly dbManager: DatabaseManager) { }
 
   async handleWebhook(payload: any, userId: string, email: string, campaignName: string) {
     this.logger.log('---------------- GOOGLE FORM WEBHOOK START ----------------');
@@ -172,7 +172,7 @@ export class GoogleFormService {
       phone: phoneValue,
       answers: row,
       formId: row.FormId || campaignName,
-      createdBy: email,
+      createdBy: userId,
       campaign,
     });
 

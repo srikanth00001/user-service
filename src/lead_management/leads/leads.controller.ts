@@ -25,21 +25,24 @@ export class LeadsController {
   constructor(
     private leadsService: LeadsService,
     private tenantService: TenantService,
-  ) {}
+  ) { }
 
   private getUser(req: any) {
     // In microservice setup, token decoded by JwtAuthGuard from shared secret
-    return { userId: req.user?.sub, email: req.user?.email, role: req.user?.role };
+    const user = { userId: req.user?.userId || req.user?.sub || req.user?.id, email: req.user?.email, role: req.user?.role };
+    console.log('🔍 User from JWT:', JSON.stringify(user, null, 2));
+    return user;
   }
 
   @UseGuards(JwtAuthGuard)
   @Get()
   async findAll(@Req() req: any) {
     const { userId, email, role } = this.getUser(req);
+    console.log('📋 Finding all leads for user:', userId, 'role:', role);
     return this.leadsService.findAll(userId, email, role);
   }
 
- @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard)
   @Post('create')
   async create(@Body() dto: any, @Req() req: any) {
     const { userId, email } = this.getUser(req);
@@ -99,12 +102,12 @@ export class LeadsController {
     return this.leadsService.generateReport(leadId, userId, email);
   }
 
-@Get('all')
-@UseGuards(JwtAuthGuard)
-async getAll(@Req() req: any) {
-  const { userId, email } = this.getUser(req);
-  return this.leadsService.getAllSources(userId, email); 
-}
+  @Get('all')
+  @UseGuards(JwtAuthGuard)
+  async getAll(@Req() req: any) {
+    const { userId, email } = this.getUser(req);
+    return this.leadsService.getAllSources(userId, email);
+  }
 
   @UseGuards(JwtAuthGuard)
   @Get('assigned')

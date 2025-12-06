@@ -50,6 +50,7 @@ export class UserService {
       state,
       country,
       role,
+      parent: userData.parentId ? await this.getUser(userData.parentId) : undefined,
     });
 
     return this.userRepository.save(user);
@@ -158,6 +159,7 @@ export class UserService {
       role: roleEntity,
       emailVerificationToken,
       tenantKey,
+      parent: user.parentId ? await this.getUser(user.parentId) : undefined,
     });
 
     return this.userRepository.save(userEntity);

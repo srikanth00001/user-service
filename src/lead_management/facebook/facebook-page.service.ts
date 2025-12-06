@@ -4,7 +4,7 @@ import { FacebookPage } from './entities/facebook-page.entity';
 
 @Injectable()
 export class FacebookPageService {
-  constructor(private readonly dbManager: DatabaseManager) {}
+  constructor(private readonly dbManager: DatabaseManager) { }
 
   /**
    * Save or update a connected Facebook Page (Multiple pages allowed)
@@ -31,10 +31,15 @@ export class FacebookPageService {
       page.accessToken = data.accessToken;
       page.connectedByUserId = data.userId;
       page.active = true;
+      // Set createdBy if not already set
+      if (!page.createdBy) {
+        page.createdBy = data.userId;
+      }
     } else {
       page = repo.create({
         tenantKey: data.tenantKey,
         connectedByUserId: data.userId,
+        createdBy: data.userId,
         pageId: data.pageId,
         pageName: data.pageName,
         accessToken: data.accessToken,

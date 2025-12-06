@@ -27,4 +27,7 @@ export class FacebookPage {
 
   @Column({ default: true })
   active: boolean;
+
+  @Column({ nullable: true })
+  createdBy?: string;
 }

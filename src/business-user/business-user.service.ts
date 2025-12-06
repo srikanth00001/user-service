@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, ConflictException } from '@nestjs/comm
 import { DatabaseManager } from 'src/common/database/database.manager';
 import { BusinessUser } from './entities/business-user.entity';
 import { BusinessRole } from 'src/business-role/entities/business-role.entity';
+import { User } from 'src/user/entities/user.entity';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
@@ -9,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 
 @Injectable()
 export class BusinessUserService {
-   constructor(
+  constructor(
     @InjectRepository(BusinessUser)
     private readonly userRepo: Repository<BusinessUser>,
 
@@ -17,7 +18,7 @@ export class BusinessUserService {
     private readonly roleRepo: Repository<BusinessRole>,
 
     private readonly dbManager: DatabaseManager
-  )  {}
+  ) { }
 
   async create(dto: any, tenantKey: string, createdBy?: string) {
     if (!dto?.email) throw new BadRequestException('Email is required');
@@ -57,16 +58,29 @@ export class BusinessUserService {
     return this.userRepo.findOne({ where: { email }, relations: ['role'] });
   }
 
-  async findById(tenantKey: string, id: string): Promise<BusinessUser | null> {
-  // If tenantKey is provided, use tenant connection
-  if (tenantKey) {
-    const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
-    const repo = dataSource.getRepository(BusinessUser);
-    return repo.findOne({ where: { id }, relations: ['role'] });
+  async findById(tenantKey: string, id: string): Promise<any | null> {
+    let user;
+    // 1. Try Tenant DB
+    if (tenantKey) {
+      const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+      const repo = dataSource.getRepository(BusinessUser);
+      user = await repo.findOne({ where: { id }, relations: ['role'] });
+    } else {
+      user = await this.userRepo.findOne({ where: { id }, relations: ['role'] });
+    }
+
+    // 2. Fallback to Master DB (if user not found in Tenant DB)
+    if (!user) {
+      try {
+        const masterDs = this.dbManager.getMasterDataSource();
+        const masterUserRepo = masterDs.getRepository(User);
+        user = await masterUserRepo.findOne({ where: { id } });
+      } catch (e) {
+        // Suppress error - likely just not found or connection issue
+      }
+    }
+    return user;
   }
-  // fallback for default
-  return this.userRepo.findOne({ where: { id }, relations: ['role'] });
-}
 
 
   async getTeam(tenantKey: string) {

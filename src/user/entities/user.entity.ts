@@ -1,13 +1,13 @@
 import { Role } from 'src/role/entities/role.entity';
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, OneToMany } from 'typeorm';
 
 @Entity()
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
- @Column({ type: 'varchar' })
-  firstName: string; 
+  @Column({ type: 'varchar' })
+  firstName: string;
 
   @Column({ type: 'varchar', nullable: true })
   lastName: string | null;
@@ -71,4 +71,10 @@ export class User {
 
   @Column({ type: 'varchar', nullable: true })
   tenantKey?: string;
+
+  @ManyToOne(() => User, (user) => user.children, { nullable: true })
+  parent: User;
+
+  @OneToMany(() => User, (user) => user.parent)
+  children: User[];
 }

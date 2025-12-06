@@ -67,6 +67,9 @@ export class Message {
   @Column({ nullable: true })
   media_url?: string;
 
+  @Column({ nullable: true })
+  createdBy?: string;
+
   @ManyToOne(() => BusinessUser, { nullable: true })
   senderUser?: BusinessUser;
 }

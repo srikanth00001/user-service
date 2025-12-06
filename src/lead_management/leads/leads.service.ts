@@ -50,7 +50,7 @@ export class LeadsService {
       repo.create({
         ...dto,
         source: dto.source || 'manual',
-        createdBy: email,
+        createdBy: userId,
         assignedTo: null,
       }),
     );
@@ -60,7 +60,14 @@ export class LeadsService {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email, role });
     const { lead: leadRepo } = this.getRepos(dataSource);
 
-    const whereClause: any = role === 'business' ? {} : { createdBy: email };
+    // Business role users (Owner, Manager, etc.) see ALL leads
+    // Personal users see only their own leads
+    const roleName = typeof role === 'object' ? (role as any)?.name : role;
+    const isBusinessRole = roleName && ['owner', 'manager', 'business'].some(r =>
+      roleName.toLowerCase().includes(r)
+    );
+
+    const whereClause: any = isBusinessRole ? {} : { createdBy: userId };
 
     return leadRepo.find({
       where: whereClause,
@@ -83,7 +90,7 @@ export class LeadsService {
           externalLeadId: true,
           createdAt: true,
         },
-        where: [{ createdBy: email }, { createdBy: userId }],
+        where: { createdBy: userId },
         relations: ['campaign'],
       }),
 
@@ -96,7 +103,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: [{ createdBy: email }, { createdBy: userId }],
+        where: { createdBy: userId },
         relations: ['campaign'],
       }),
 
@@ -111,7 +118,7 @@ export class LeadsService {
           createdAt: true,           // This was missing!
         },
         relations: ['campaign'],       // To get campaign.name
-        where: [{ createdBy: email }, { createdBy: userId }],
+        where: { createdBy: userId },
       }),
 
       // Google Form Leads
@@ -123,7 +130,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: [{ createdBy: email }, { createdBy: userId }],
+        where: { createdBy: userId },
         relations: ['campaign'],
       }),
 
@@ -136,7 +143,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: [{ createdBy: email }, { createdBy: userId }],
+        where: { createdBy: userId },
       }),
     ]);
 
@@ -188,17 +195,14 @@ export class LeadsService {
     const { lead: leadRepo, note: noteRepo } = this.getRepos(dataSource);
 
     const lead = await leadRepo.findOne({
-      where: [
-        { id: leadId, createdBy: email },
-        { id: leadId, createdBy: userId },
-      ],
+      where: { id: leadId, createdBy: userId },
     });
     if (!lead) throw new HttpException('Lead not found', HttpStatus.NOT_FOUND);
 
     const note = noteRepo.create({
       content,
       lead,
-      createdBy: email,
+      createdBy: userId,
     });
     return noteRepo.save(note);
   }
@@ -274,10 +278,7 @@ export class LeadsService {
     const { lead: leadRepo } = this.getRepos(dataSource);
 
     const lead = await leadRepo.findOne({
-      where: [
-        { id: leadId, createdBy: email },
-        { id: leadId, createdBy: userId },
-      ],
+      where: { id: leadId, createdBy: userId },
     });
     if (!lead) throw new HttpException('Lead not found', HttpStatus.NOT_FOUND);
 
@@ -308,7 +309,7 @@ export class LeadsService {
           phone: row.phone || row.Phone || row.mobile || null,
           pageId: row.pageId || row.page_id || null,
           rawData: row,
-          createdBy: email,
+          createdBy: userId,
           source: 'excel_import',
         });
 
@@ -351,10 +352,7 @@ export class LeadsService {
     const { lead: leadRepo } = this.getRepos(dataSource);
 
     const lead = await leadRepo.findOne({
-      where: [
-        { id: leadId, createdBy: email },
-        { id: leadId, createdBy: userId },
-      ],
+      where: { id: leadId, createdBy: userId },
       relations: ['campaign', 'notes'],
     });
 

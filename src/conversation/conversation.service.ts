@@ -32,7 +32,7 @@ export class ConversationService {
     @Inject(forwardRef(() => LeadsService))
     private leadsService: LeadsService,
     private agentAssignmentService: AgentAssignmentService,
-  ) {}
+  ) { }
 
   private async getRepos(dataSource: DataSource) {
     return {
@@ -84,7 +84,7 @@ export class ConversationService {
       source: dto.source || 'manual',
       phone_number: lead.phone,
       lead_name: lead.name,
-      createdBy: email,
+      createdBy: userId,
       assigned_agent_id: assignedAgentId || undefined,
       business_phone_number_id: dto.business_phone_number_id || null,
       business_display_phone_number: dto.business_display_phone_number || connection?.displayPhoneNumber || null,
@@ -108,77 +108,77 @@ export class ConversationService {
   }
 
   async findAll(tenantKey: string, userId: string, email: string): Promise<{ success: boolean; data: ConversationListItem[] }> {
-  const dataSource = await this.getDataSourceForUser(userId, email);
-  const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
+    const dataSource = await this.getDataSourceForUser(userId, email);
+    const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
-  // Step 1: Get all conversations with their latest message in one query
-  const conversationsWithLastMessage = await convRepo
-    .createQueryBuilder('conv')
-    .leftJoinAndSelect(
-      '(SELECT DISTINCT ON ("conversation_id") * FROM messages WHERE deleted_for_everyone = false ORDER BY "conversation_id", created_at DESC)',
-      'last_msg',
-      'last_msg.conversation_id = conv.id'
-    )
-    .select([
-      'conv.*',
-      'last_msg.content AS last_message_content',
-      'last_msg.created_at AS last_message_at',
-    ])
-    .orderBy('last_message_at', 'DESC', 'NULLS LAST')  // Most recent message first
-    .addOrderBy('conv.updated_at', 'DESC')             // Fallback: recently updated
-    .getRawMany();
+    // Step 1: Get all conversations with their latest message in one query
+    const conversationsWithLastMessage = await convRepo
+      .createQueryBuilder('conv')
+      .leftJoinAndSelect(
+        '(SELECT DISTINCT ON ("conversation_id") * FROM messages WHERE deleted_for_everyone = false ORDER BY "conversation_id", created_at DESC)',
+        'last_msg',
+        'last_msg.conversation_id = conv.id'
+      )
+      .select([
+        'conv.*',
+        'last_msg.content AS last_message_content',
+        'last_msg.created_at AS last_message_at',
+      ])
+      .orderBy('last_message_at', 'DESC', 'NULLS LAST')  // Most recent message first
+      .addOrderBy('conv.updated_at', 'DESC')             // Fallback: recently updated
+      .getRawMany();
 
-  const enriched: ConversationListItem[] = [];
+    const enriched: ConversationListItem[] = [];
 
-  for (const row of conversationsWithLastMessage) {
-    const conv = row as any;
+    for (const row of conversationsWithLastMessage) {
+      const conv = row as any;
 
-    // Count unread messages (only incoming/customer messages if needed)
-    const unreadCount = await msgRepo.count({
-      where: {
-        conversation_id: conv.id,
-        isRead: false,
-        // Optional: only count customer messages
-        // sender_user_id: IsNull(),
-      },
-    });
+      // Count unread messages (only incoming/customer messages if needed)
+      const unreadCount = await msgRepo.count({
+        where: {
+          conversation_id: conv.id,
+          isRead: false,
+          // Optional: only count customer messages
+          // sender_user_id: IsNull(),
+        },
+      });
 
-    let assignedAgent: BusinessUser | null = null;
-    if (conv.assigned_agent_id) {
-      assignedAgent = await userRepo.findOne({ where: { id: conv.assigned_agent_id } });
+      let assignedAgent: BusinessUser | null = null;
+      if (conv.assigned_agent_id) {
+        assignedAgent = await userRepo.findOne({ where: { id: conv.assigned_agent_id } });
+      }
+
+      enriched.push({
+        id: conv.id,
+        lead_id: conv.lead_id,
+        source: conv.source,
+        phone_number: conv.phone_number,
+        business_phone_number_id: conv.business_phone_number_id,
+        business_display_phone_number: conv.business_display_phone_number,
+        lead_name: conv.lead_name,
+        assigned_agent_id: conv.assigned_agent_id,
+        status: conv.status,
+        active: conv.active,
+        priority: conv.priority,
+        department: conv.department,
+        topic: conv.topic,
+        channel: conv.channel,
+        sentiment: conv.sentiment,
+        createdBy: conv.createdBy,
+        created_at: conv.created_at,
+        updated_at: conv.updated_at,
+        deleted_at: conv.deleted_at,
+
+        // From subquery
+        last_message: conv.last_message_content?.trim() || null,
+        last_message_at: conv.last_message_at || null,
+        unread_count: unreadCount,
+        assignedAgent: assignedAgent || null,
+      });
     }
 
-    enriched.push({
-      id: conv.id,
-      lead_id: conv.lead_id,
-      source: conv.source,
-      phone_number: conv.phone_number,
-      business_phone_number_id: conv.business_phone_number_id,
-      business_display_phone_number: conv.business_display_phone_number,
-      lead_name: conv.lead_name,
-      assigned_agent_id: conv.assigned_agent_id,
-      status: conv.status,
-      active: conv.active,
-      priority: conv.priority,
-      department: conv.department,
-      topic: conv.topic,
-      channel: conv.channel,
-      sentiment: conv.sentiment,
-      createdBy: conv.createdBy,
-      created_at: conv.created_at,
-      updated_at: conv.updated_at,
-      deleted_at: conv.deleted_at,
-
-      // From subquery
-      last_message: conv.last_message_content?.trim() || null,
-      last_message_at: conv.last_message_at || null,
-      unread_count: unreadCount,
-      assignedAgent: assignedAgent || null,
-    });
+    return { success: true, data: enriched };
   }
-
-  return { success: true, data: enriched };
-}
 
   async findByPhone(
     tenantKey: string,

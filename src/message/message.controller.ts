@@ -24,25 +24,30 @@ import { FileInterceptor } from '@nestjs/platform-express';
 @UseGuards(JwtAuthGuard)
 @Controller({ path: 'messages', version: Constants.API_VERSION })
 export class MessageController {
-  constructor(private readonly messageService: MessageService) {}
+  constructor(private readonly messageService: MessageService) { }
 
   @Post()
-async create(@Body() dto: CreateMessageDto, @Request() req: any) {
-  console.log('REQ.USER:', req.user); // JWT payload
-  const { userId, email, tenantKey } = this.getUser(req);
-  console.log('RESOLVED USERID:', userId);
-  console.log('DTO BEFORE SENDING TO SERVICE:', dto);
+  async create(@Body() dto: CreateMessageDto, @Request() req: any) {
+    console.log('=== MESSAGE CONTROLLER DEBUG ===');
+    console.log('req.user keys:', Object.keys(req.user || {}));
+    console.log('req.user full:', JSON.stringify(req.user, null, 2));
+    const { userId, email, tenantKey } = this.getUser(req);
+    console.log('Extracted userId:', userId);
 
-  try {
-    dto.sender_user_id = userId;
-    const result = await this.messageService.create(tenantKey, dto, userId, email);
-    console.log('MESSAGE CREATED:', result);
-    return result;
-  } catch (err) {
-    console.error('ERROR CREATING MESSAGE:', err.message, err.stack);
-    throw err;
+    // Explicitly set sender_user_id if not present in DTO
+    if (!dto.sender_user_id && userId) {
+      dto.sender_user_id = userId;
+    }
+    console.log('DTO sender_user_id:', dto.sender_user_id);
+
+    try {
+      const result = await this.messageService.create(tenantKey, dto, userId, email);
+      return result;
+    } catch (err) {
+      console.error('ERROR CREATING MESSAGE:', err);
+      throw err;
+    }
   }
-}
 
 
 
@@ -82,15 +87,15 @@ async create(@Body() dto: CreateMessageDto, @Request() req: any) {
     return this.messageService.removeLabel(tenantKey, messageId, label, userId, email);
   }
 
-@Post(':messageId/forward')
-async forward(
-  @Param('messageId', ParseIntPipe) messageId: number,
-  @Body('target_conversation_id') targetConversationId: number, // ← change this
-  @Request() req: any,
-) {
-  const { userId, email, tenantKey } = this.getUser(req);
-  return this.messageService.forward(tenantKey, [messageId], targetConversationId, userId, email);
-}
+  @Post(':messageId/forward')
+  async forward(
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Body('target_conversation_id') targetConversationId: number, // ← change this
+    @Request() req: any,
+  ) {
+    const { userId, email, tenantKey } = this.getUser(req);
+    return this.messageService.forward(tenantKey, [messageId], targetConversationId, userId, email);
+  }
 
   @Post(':messageId/share')
   async share(
@@ -134,13 +139,13 @@ async forward(
     return this.messageService.upload(tenantKey, body.messageId, file, userId, email, viewOnce);
   }
 
- private getUser(req: any) {
-  return {
-    userId: req.user?.userId || req.user?.sub || req.user?.id,
-    email: req.user?.email,
-    tenantKey: req.user?.tenantKey,
-    role: req.user?.role,
-  };
-}
+  private getUser(req: any) {
+    return {
+      userId: req.user?.userId || req.user?.sub || req.user?.id,
+      email: req.user?.email,
+      tenantKey: req.user?.tenantKey,
+      role: req.user?.role,
+    };
+  }
 
 }

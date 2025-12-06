@@ -7,11 +7,13 @@ import {
   Logger
 } from '@nestjs/common';
 import { DataSource, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Message } from './entities/message.entity';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { DatabaseManager } from 'src/common/database/database.manager';
 import { BusinessUser } from 'src/business-user/entities/business-user.entity';
+import { User } from 'src/user/entities/user.entity';
 import { Conversation } from 'src/conversation/entities/conversation.entity';
 import { WhatsAppService } from 'src/whatsapp/whatsapp.service';
 import { MetaConnection } from 'src/lead_management/facebook/entities/meta-connection.entity';
@@ -68,11 +70,21 @@ export class MessageService {
         parentWhatsAppMessageId = parentMsg.whatsapp_message_id || undefined;
       }
 
-      // 3. Validate sender
+      // 3. Validate sender (check both tenant DB and master DB for personal users)
       const senderUserId = dto.sender_user_id || userId;
       if (senderUserId) {
-        const sender = await userRepo.findOne({ where: { id: senderUserId } });
-        if (!sender) throw new NotFoundException('Sender user not found');
+        let sender: BusinessUser | User | null = await userRepo.findOne({ where: { id: senderUserId } });
+
+        // If not found in tenant DB, check master DB (for personal users)
+        if (!sender) {
+          const masterDs = this.dbManager.getMasterDataSource();
+          const masterUserRepo = masterDs.getRepository(User);
+          sender = await masterUserRepo.findOne({ where: { id: senderUserId } });
+        }
+
+        if (!sender) {
+          throw new NotFoundException('Sender user not found');
+        }
       }
 
       // 4. Input validation
@@ -100,7 +112,23 @@ export class MessageService {
       // 6. Attach sender info
       const savedWithSender = saved as MessageWithSender;
       if (saved.sender_user_id) {
-        const sender = await userRepo.findOne({ where: { id: saved.sender_user_id } });
+        let sender: any = await userRepo.findOne({ where: { id: saved.sender_user_id } });
+        if (!sender) {
+          this.logger.log(`Sender ${saved.sender_user_id} not in tenant DB. Checking Master...`);
+          const masterConn = this.dbManager.getMasterDataSource();
+          if (!masterConn.isInitialized) {
+            this.logger.error('Master DataSource NOT initialized!');
+          } else {
+            const masterUserRepo = masterConn.getRepository(User);
+            try {
+              this.logger.log(`Looking for user ${saved.sender_user_id} in table: ${masterUserRepo.metadata.tableName}`);
+              sender = await masterUserRepo.findOne({ where: { id: saved.sender_user_id } });
+              this.logger.log(`Master DB Result: ${sender ? 'FOUND: ' + sender.firstName : 'NOT FOUND'}`);
+            } catch (e) {
+              this.logger.error('Master DB Lookup Failed', e);
+            }
+          }
+        }
         savedWithSender.senderUser = sender ?? undefined;
       }
 
@@ -190,10 +218,48 @@ export class MessageService {
 
     const result: MessageWithSender[] = messages.map((msg) => msg as MessageWithSender);
 
+    // Get master connection for fallback
+    let masterUserRepo: Repository<User> | undefined;
+    try {
+      const masterConn = this.dbManager.getMasterDataSource();
+      masterUserRepo = masterConn.getRepository(User);
+    } catch (e) {
+      this.logger.error('Failed to get master connection for user lookup', e);
+    }
+
     for (const msg of result) {
       if (msg.sender_user_id) {
-        const user = await userRepo.findOne({ where: { id: msg.sender_user_id } });
+        // Try tenant DB first
+        let user: any = await userRepo.findOne({ where: { id: msg.sender_user_id } });
+
+        if (user) {
+          // console.log(`Found sender ${msg.sender_user_id} in TENANT DB: ${user.name || user.firstName}`);
+        }
+
+        // Fallback to master DB if not found
+        if (!user && masterUserRepo) {
+          this.logger.log(`Sender ${msg.sender_user_id} not in tenant DB, checking master DB...`);
+          try {
+            user = await masterUserRepo.findOne({ where: { id: msg.sender_user_id } });
+            if (user) {
+              this.logger.log(`Found sender ${msg.sender_user_id} in MASTER DB: ${user.firstName} ${user.lastName}`);
+            } else {
+              this.logger.warn(`Sender ${msg.sender_user_id} NOT FOUND in MASTER DB either.`);
+            }
+          } catch (e) {
+            this.logger.error(`Error looking up user ${msg.sender_user_id} in master DB`, e);
+          }
+        }
+
         msg.senderUser = user ?? undefined;
+      }
+    }
+
+    // Log the first message to see structure
+    if (result.length > 0) {
+      const sample = result.find(m => m.sender_user_id);
+      if (sample) {
+        this.logger.log(`Sample message structure: ID=${sample.id}, SenderID=${sample.sender_user_id}, SenderUser=${JSON.stringify(sample.senderUser)}`);
       }
     }
 
