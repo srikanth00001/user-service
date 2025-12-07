@@ -1,5 +1,5 @@
 // src/lead-assignment/lead-assignment.controller.ts
-import { Controller, Post, Body, Req, UseGuards, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Body, Req, UseGuards, ForbiddenException, Get, Param, ParseIntPipe } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { Constants } from 'src/common/constants';
 import { AgentAssignmentService } from './agent-assignment.service';
@@ -12,14 +12,18 @@ export class AgentAssignmentController {
 
   @Post()
   async create(@Body() dto: CreateAgentAssignmentDto, @Req() req: any) {
-    const { userId, email, tenantKey, role } = this.getUser(req);
-
-    // Only business users can assign agents
-    if (role !== 'business') {
-      throw new ForbiddenException('Agent assignment is only available for business users');
-    }
-
+    const { userId, email, tenantKey } = this.getUser(req);
     return this.service.create(tenantKey, dto, userId, email);
+  }
+
+  @Get('lead/:leadId/:source')
+  async getByLead(
+    @Param('leadId', ParseIntPipe) leadId: number,
+    @Param('source') source: string,
+    @Req() req: any,
+  ) {
+    const { tenantKey } = this.getUser(req);
+    return this.service.getAssignmentWithAgent(tenantKey, leadId, source);
   }
 
   private getUser(req: any) {

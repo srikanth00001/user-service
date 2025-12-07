@@ -183,6 +183,18 @@ export class WhatsAppService {
     return res.data.url;
   }
 
+  // Download media from WhatsApp's temporary URL
+  async downloadMedia(mediaUrl: string, opts: { accessToken: string }): Promise<Buffer> {
+    const res = await axios.get(mediaUrl, {
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+      },
+      responseType: 'arraybuffer',
+      timeout: 60_000,
+    });
+    return Buffer.from(res.data);
+  }
+
   private async sendPayload(payload: any, opts: { phoneNumberId: string; accessToken: string }): Promise<string> {
     try {
       const res = await axios.post(`${this.baseUrl}/${this.getPhoneNumberId(opts.phoneNumberId)}/messages`, payload, {

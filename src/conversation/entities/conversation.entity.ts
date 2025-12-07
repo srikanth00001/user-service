@@ -1,7 +1,8 @@
 // src/conversation/entities/conversation.entity.ts
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, DeleteDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, DeleteDateColumn, Index } from 'typeorm';
 
 @Entity('conversations')
+@Index(['lead_id', 'source'], { unique: true })
 export class Conversation {
   @PrimaryGeneratedColumn()
   id: number;

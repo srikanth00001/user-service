@@ -16,7 +16,6 @@ import { MessageGateway } from 'src/websocket/message.gateway';
 import { CreateConversationDto } from 'src/conversation/dto/create-conversation.dto';
 import { CreateMessageDto } from 'src/message/dto/create-message.dto';
 import { DataSource } from 'typeorm';
-import axios from 'axios';
 import { Conversation } from 'src/conversation/entities/conversation.entity';
 import { AgentAssignmentService } from 'src/agent-assignment/agent-assignment.service';
 import { Lead } from 'src/lead_management/leads/entities/lead.entity';
@@ -44,6 +43,20 @@ export class TeamInboxService {
     };
   }
 
+  /**
+   * Normalize phone number for database storage
+   * Removes country code (91) to store as 9715574444
+   * WhatsApp sends as 919715574444, we normalize to 9715574444
+   */
+  private normalizePhoneNumber(phone: string): string {
+    const digits = phone.replace(/\D/g, ''); // Remove non-digits
+    // If starts with 91 (India country code) and has more than 10 digits, remove it
+    if (digits.startsWith('91') && digits.length > 10) {
+      return digits.substring(2); // Remove '91' prefix
+    }
+    return digits;
+  }
+
   async processIncomingMessage(data: {
     tenantKey: string;
     phoneNumber: string;
@@ -54,6 +67,8 @@ export class TeamInboxService {
     parentMessageId?: number;
     reaction?: { messageId: string; emoji: string };
     businessPhoneNumberId?: string;
+    mediaUrl?: string;
+    filename?: string;
   }) {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(data.tenantKey);
     const { message: msgRepo, conversation: convRepo } = await this.getRepos(dataSource);
@@ -75,13 +90,16 @@ export class TeamInboxService {
       }
     }
 
-    let lead = await this.leadsService.findLeadByPhone(data.tenantKey, data.phoneNumber);
+    // Normalize phone number for consistent storage (remove country code)
+    const normalizedPhone = this.normalizePhoneNumber(data.phoneNumber);
+
+    let lead = await this.leadsService.findLeadByPhone(data.tenantKey, normalizedPhone);
     if (!lead) {
       const repo = dataSource.getRepository(Lead);
       lead = await repo.save(
         repo.create({
           name: data.name || 'Unknown',
-          phone: data.phoneNumber,
+          phone: normalizedPhone,
           source: 'manual',
           createdBy: 'system',
         })
@@ -90,7 +108,8 @@ export class TeamInboxService {
 
     const leadSource = lead.source ?? 'manual';
     // Prefer existing conversation by phone number to avoid source mismatches creating duplicate conversations
-    let conv = await convRepo.findOne({ where: { phone_number: data.phoneNumber } });
+    // Use normalized phone number for lookup
+    let conv = await convRepo.findOne({ where: { phone_number: normalizedPhone } });
     if (!conv) {
       conv = await this.conversationService.findByLead(data.tenantKey, lead.id, leadSource);
     }
@@ -99,7 +118,7 @@ export class TeamInboxService {
       const dto: CreateConversationDto = {
         lead_id: lead.id,
         source: leadSource,
-        phone_number: data.phoneNumber,
+        phone_number: normalizedPhone,
         lead_name: data.name || lead.name,
         business_phone_number_id: data.businessPhoneNumberId,
       } as any;
@@ -119,6 +138,8 @@ export class TeamInboxService {
       content: data.messageContent,
       type: data.messageType as any,
       parent_message_id: data.parentMessageId,
+      media_url: data.mediaUrl,
+      filename: data.filename,
     };
 
     const msg = await this.messageService.create(
@@ -143,7 +164,6 @@ export class TeamInboxService {
     return await this.messageService.findByConversation(tenantKey, conversationId, userId, email);
   }
 
-  // src/team-inbox/team-inbox.service.ts
   async send(tenantKey: string, dto: CreateMessageDto, userId: string, email: string) {
     const convResult = await this.conversationService.findOne(tenantKey, dto.conversation_id, userId, email);
     const conv = convResult.data;

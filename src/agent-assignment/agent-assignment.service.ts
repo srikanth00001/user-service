@@ -1,5 +1,5 @@
 // src/lead-assignment/agent-assignment.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { DatabaseManager } from 'src/common/database/database.manager';
 import { Lead } from 'src/lead_management/leads/entities/lead.entity';
@@ -14,7 +14,7 @@ import { CreateAgentAssignmentDto } from './dto/create-agent-assignment.dto';
 
 @Injectable()
 export class AgentAssignmentService {
-  constructor(private dbManager: DatabaseManager) {}
+  constructor(private dbManager: DatabaseManager) { }
 
   private async getRepos(dataSource: DataSource) {
     return {
@@ -64,6 +64,14 @@ export class AgentAssignmentService {
       conversation: convRepo,
     } = await this.getRepos(dataSource);
 
+    // ── Check for Existing Assignment ──
+    const existing = await this.findByLead(tenantKey, dto.lead_id, dto.source);
+    if (existing) {
+      const agent = await userRepo.findOne({ where: { id: existing.assigned_agent_id } });
+      const agentName = agent ? `${agent.firstName} ${agent.lastName || ''}`.trim() : 'Unknown Agent';
+      throw new ConflictException(`Lead already assigned to ${agentName}`);
+    }
+
     // ── Validate Agent ──
     const agent = await userRepo.findOne({ where: { id: dto.assigned_agent_id } });
     if (!agent) throw new NotFoundException('Agent not found');
@@ -104,5 +112,25 @@ export class AgentAssignmentService {
       where: { leadId, leadSource: source },
       order: { created_at: 'DESC' },
     });
+  }
+
+  /**
+   * Get assignment with agent details
+   */
+  async getAssignmentWithAgent(
+    tenantKey: string,
+    leadId: number,
+    source: string,
+  ): Promise<{ assignment: AgentAssignment | null; agent: BusinessUser | null }> {
+    const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const { assignment: assignRepo, businessUser: userRepo } = await this.getRepos(dataSource);
+
+    const assignment = await assignRepo.findOne({ where: { leadId, leadSource: source } });
+    if (!assignment) {
+      return { assignment: null, agent: null };
+    }
+
+    const agent = await userRepo.findOne({ where: { id: assignment.assigned_agent_id } });
+    return { assignment, agent };
   }
 }

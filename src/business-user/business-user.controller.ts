@@ -18,7 +18,7 @@ import { BusinessRole } from 'src/business-role/entities/business-role.entity';
 import { Repository } from 'typeorm';
 import { Constants } from '../common/constants';
 
-@Controller({ path: 'business-users', version: Constants.API_VERSION })
+@Controller({ path:'business-users', version: Constants.API_VERSION })
 @UseGuards(JwtAuthGuard)
 export class BusinessUserController {
   constructor(private readonly dbManager: DatabaseManager) { }

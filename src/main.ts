@@ -14,11 +14,11 @@ async function bootstrap() {
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
 
-  app.useStaticAssets(join(__dirname, '..', 'Uploads'), {
-    prefix: '/v1/uploads/',
+  app.useStaticAssets(join(__dirname, '..', 'uploads'), {
+    prefix: '/uploads/',
   });
 
-    app.enableVersioning({
+  app.enableVersioning({
     type: VersioningType.URI,
     defaultVersion: apiVersion,
   });
@@ -30,10 +30,10 @@ async function bootstrap() {
   });
 
   app.enableCors({
-  origin: ['http://localhost:3002','http://localhost:3003'],
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-  credentials: true,
-});
+    origin: ['http://localhost:3002', 'http://localhost:3003'],
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
+  });
 
 
 

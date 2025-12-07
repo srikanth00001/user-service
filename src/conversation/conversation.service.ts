@@ -1,5 +1,5 @@
 // src/conversation/conversation.service.ts
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, ConflictException } from '@nestjs/common';
 import { DataSource, FindOptionsWhere } from 'typeorm';
 import { Conversation } from './entities/conversation.entity';
 import { CreateConversationDto } from './dto/create-conversation.dto';
@@ -65,6 +65,19 @@ export class ConversationService {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
     const { conversation: convRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
+    // ── Check for Existing Conversation ──
+    const existingConv = await this.findByLead(tenantKey, dto.lead_id, dto.source || 'manual');
+    if (existingConv) {
+      let errorMessage = 'A conversation already exists for this lead';
+      if (existingConv.assigned_agent_id) {
+        const agent = await userRepo.findOne({ where: { id: existingConv.assigned_agent_id } });
+        if (agent) {
+          const agentName = `${agent.firstName} ${agent.lastName || ''}`.trim();
+          errorMessage = `Lead already has a conversation assigned to ${agentName}`;
+        }
+      }
+      throw new ConflictException(errorMessage);
+    }
 
     const lead = await this.leadsService.findLeadById(tenantKey, dto.lead_id, dto.source || 'manual');
     if (!lead) throw new NotFoundException('Lead not found');
@@ -111,7 +124,7 @@ export class ConversationService {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
-    // Step 1: Get all conversations with their latest message in one query
+    // Step 1: Get conversations assigned to this user with their latest message
     const conversationsWithLastMessage = await convRepo
       .createQueryBuilder('conv')
       .leftJoinAndSelect(
@@ -119,6 +132,7 @@ export class ConversationService {
         'last_msg',
         'last_msg.conversation_id = conv.id'
       )
+      .where('conv.assigned_agent_id = :userId', { userId })  // ✅ Filter by assigned agent
       .select([
         'conv.*',
         'last_msg.content AS last_message_content',

@@ -32,7 +32,7 @@ import { ParseUUIDPipe } from '@nestjs/common';
 
 // Configure storage for file uploads
 const storage = diskStorage({
-  destination: './Uploads/menu',
+  destination: './uploads/menu',
   filename: (req, file, cb) => {
     const uniqueName = `${uuidv4()}${extname(file.originalname)}`;
     cb(null, uniqueName);
@@ -42,7 +42,7 @@ const storage = diskStorage({
 @ApiTags('Menus')
 @Controller({ path: 'menu', version: Constants.API_VERSION })
 export class MenuController {
-  constructor(private readonly menuService: MenuService) {}
+  constructor(private readonly menuService: MenuService) { }
 
   @ApiOperation({ summary: 'Create a new menu' })
   @ApiResponse({

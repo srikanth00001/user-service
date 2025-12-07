@@ -341,7 +341,25 @@ export class MessageService {
     };
 
     const mediaId = await this.whatsAppService.uploadMedia(filePath, whatsappMediaType, opts);
-    const mediaUrl = await this.whatsAppService.getMediaUrl(mediaId, { accessToken: overrideConn.accessToken });
+
+    // Get WhatsApp's temporary media URL
+    const tempMediaUrl = await this.whatsAppService.getMediaUrl(mediaId, { accessToken: overrideConn.accessToken });
+
+    // Download media from WhatsApp and save permanently
+    const uploadsDir = path.join(process.cwd(), 'uploads', tenantKey);
+    await fs.mkdir(uploadsDir, { recursive: true });
+
+    const timestamp = Date.now();
+    const ext = path.extname(safeFileName);
+    const permanentFileName = `${timestamp}_${path.basename(safeFileName, ext)}${ext}`;
+    const permanentFilePath = path.join(uploadsDir, permanentFileName);
+
+    // Download from WhatsApp's temporary URL
+    const mediaBuffer = await this.whatsAppService.downloadMedia(tempMediaUrl, { accessToken: overrideConn.accessToken });
+    await fs.writeFile(permanentFilePath, mediaBuffer);
+
+    // Create permanent URL (served by your backend)
+    const permanentUrl = `/uploads/${tenantKey}/${permanentFileName}`;
 
     // Send correctly typed media
     const whatsappMessageId = await this.whatsAppService.sendMediaMessage(
@@ -353,7 +371,7 @@ export class MessageService {
     );
 
     await msgRepo.update(messageId, {
-      media_url: mediaUrl,
+      media_url: permanentUrl,
       filename: safeFileName,
       view_once,
       whatsapp_message_id: whatsappMessageId,
