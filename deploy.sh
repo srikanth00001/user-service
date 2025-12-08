@@ -5,11 +5,11 @@ cd /opt/lead-crm/user-service || exit
 
 # Ensure we are on the correct branch
 git fetch --all
-git checkout main
+git checkout dev
 
 # Reset local changes and pull latest code
 git reset --hard
-git pull origin main
+git pull origin dev
 
 # Install/update dependencies
 npm install
