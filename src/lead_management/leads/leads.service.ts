@@ -273,16 +273,44 @@ export class LeadsService {
     });
   }
 
-  async delete(leadId: number, userId: string, email: string) {
+  async delete(leadId: number, source: string, userId: string, email: string) {
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const { lead: leadRepo } = this.getRepos(dataSource);
 
-    const lead = await leadRepo.findOne({
+    let repo: any = leadRepo; // Default to manual/Lead
+
+    switch (source) {
+      case 'meta':
+        repo = dataSource.getRepository(MetaLead);
+        break;
+      case 'google_ads':
+        repo = dataSource.getRepository(GoogleAdsLead);
+        break;
+      case 'google_form':
+        repo = dataSource.getRepository(GoogleFormLead);
+        break;
+      case 'excel_import':
+        repo = dataSource.getRepository(ExcelLead);
+        break;
+      case 'manual':
+      default:
+        repo = leadRepo;
+        break;
+    }
+
+    const lead = await repo.findOne({
       where: { id: leadId, createdBy: userId },
     });
+
     if (!lead) throw new HttpException('Lead not found', HttpStatus.NOT_FOUND);
 
-    return leadRepo.softRemove(lead);
+    // If the entity supports soft delete (has @DeleteDateColumn), softRemove works.
+    // If not, we might need remove. Usually Lead entities have soft delete.
+    // Let's assume they all do or fallback to remove if needed, but softRemove is safer.
+    // Check if the entity has deletedAt equivalent. 
+    // TypeORM softRemove checks metadata.
+
+    return repo.softRemove(lead);
   }
 
   async importLeads(file: Express.Multer.File, userId: string, email: string) {

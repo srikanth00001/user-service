@@ -12,6 +12,7 @@ import {
   Req,
   ParseIntPipe,
   UseInterceptors,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { LeadsService } from './leads.service';
@@ -85,10 +86,11 @@ export class LeadsController {
   @Delete(':leadId')
   async deleteLead(
     @Param('leadId', ParseIntPipe) leadId: number,
+    @Query('source') source: string,
     @Req() req: any,
   ) {
     const { userId, email } = this.getUser(req);
-    await this.leadsService.delete(leadId, userId, email);
+    await this.leadsService.delete(leadId, source, userId, email);
     return { status: 'success', message: 'Lead deleted successfully' };
   }
 

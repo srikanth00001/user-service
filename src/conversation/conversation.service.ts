@@ -120,27 +120,50 @@ export class ConversationService {
     return { success: true, data: result };
   }
 
-  async findAll(tenantKey: string, userId: string, email: string): Promise<{ success: boolean; data: ConversationListItem[] }> {
+  async findAll(tenantKey: string, userId: string, email: string, role?: any): Promise<{ success: boolean; data: ConversationListItem[] }> {
     const dataSource = await this.getDataSourceForUser(userId, email);
     const { conversation: convRepo, message: msgRepo, businessUser: userRepo } = await this.getRepos(dataSource);
 
-    // Step 1: Get conversations assigned to this user with their latest message
-    const conversationsWithLastMessage = await convRepo
-      .createQueryBuilder('conv')
+    // Determine Role
+    const roleName = String(typeof role === 'object' ? role?.name : role || '').toLowerCase();
+
+    // 1. Privileged: Can see EVERYTHING
+    // Note: Removed 'business' generic match to prevent 'business_user' from seeing all.
+    const isPrivileged = ['owner', 'manager', 'admin'].some((r) => roleName.includes(r));
+
+    // 2. Staff/Agent: Can see ASSIGNED ONLY
+    const isStaff = ['staff', 'agent', 'business_user'].some((r) => roleName.includes(r));
+
+    // 3. Personal: Can see CREATED ONLY
+    // Default fallback for anyone else (e.g. 'user', 'personal')
+    const isPersonal = !isPrivileged && !isStaff;
+
+    const query = convRepo.createQueryBuilder('conv')
       .leftJoinAndSelect(
         '(SELECT DISTINCT ON ("conversation_id") * FROM messages WHERE deleted_for_everyone = false ORDER BY "conversation_id", created_at DESC)',
         'last_msg',
         'last_msg.conversation_id = conv.id'
       )
-      .where('conv.assigned_agent_id = :userId', { userId })  // ✅ Filter by assigned agent
       .select([
         'conv.*',
         'last_msg.content AS last_message_content',
         'last_msg.created_at AS last_message_at',
       ])
       .orderBy('last_message_at', 'DESC', 'NULLS LAST')  // Most recent message first
-      .addOrderBy('conv.updated_at', 'DESC')             // Fallback: recently updated
-      .getRawMany();
+      .addOrderBy('conv.updated_at', 'DESC');            // Fallback: recently updated
+
+    // ── Filter Logic ──
+    if (isPrivileged) {
+      // No filter: Owners/Managers see ALL
+    } else if (isStaff) {
+      // Staff/Business Users see ONLY conversations assigned to them
+      query.andWhere('conv.assigned_agent_id = :userId', { userId });
+    } else {
+      // Personal users see ONLY conversations they created
+      query.andWhere('conv.createdBy = :userId', { userId });
+    }
+
+    const conversationsWithLastMessage = await query.getRawMany();
 
     const enriched: ConversationListItem[] = [];
 
