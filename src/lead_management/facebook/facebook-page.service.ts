@@ -106,4 +106,32 @@ export class FacebookPageService {
     const repo = dataSource.getRepository(FacebookPage);
     await repo.update({ pageId }, { active: false });
   }
+
+  // Delete page
+  async deletePage(pageId: string, tenantKey: string, userId: string): Promise<void> {
+    const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    if (!dataSource) throw new Error('Tenant DB not found');
+
+    const repo = dataSource.getRepository(FacebookPage);
+    const page = await repo.findOne({ where: { pageId, tenantKey } });
+
+    if (!page) {
+      throw new Error('Page not found');
+    }
+
+    // Soft delete by setting active to false
+    page.active = false;
+    await repo.save(page);
+  }
+
+  // Alias for backward compatibility
+  async savePage(pageId: string, pageName: string, pageAccessToken: string, tenantKey: string, userId: string) {
+    return this.saveConnectedPage({
+      tenantKey,
+      userId,
+      pageId,
+      pageName,
+      accessToken: pageAccessToken,
+    });
+  }
 }
