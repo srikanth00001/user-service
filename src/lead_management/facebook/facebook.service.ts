@@ -61,6 +61,10 @@ export class FacebookService {
     let connection = await repo.findOne({ where: { phoneNumberId: data.phoneNumberId } });
 
     if (!connection) {
+      // Generate unique webhook token for new connections
+      const crypto = require('crypto');
+      const webhookToken = crypto.randomBytes(32).toString('hex');
+
       connection = repo.create({
         tenantKey,
         connectedByUserId: userId,
@@ -74,6 +78,8 @@ export class FacebookService {
         verified: true,
         active: true,
         connectedAt: new Date(),
+        webhookToken, // Set generated token
+        webhookVerified: false,
       });
     } else {
       connection.active = true;
@@ -81,6 +87,11 @@ export class FacebookService {
       // Set createdBy if not already set
       if (!connection.createdBy) {
         connection.createdBy = userId;
+      }
+      // Generate token if not exists
+      if (!connection.webhookToken) {
+        const crypto = require('crypto');
+        connection.webhookToken = crypto.randomBytes(32).toString('hex');
       }
     }
 
@@ -446,5 +457,66 @@ export class FacebookService {
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────
+  // WEBHOOK URL MANAGEMENT
+  // ─────────────────────────────────────────────────────────────────
+  async updateWebhookUrl(
+    tenantKey: string,
+    phoneNumberId: string,
+    webhookUrl: string,
+  ): Promise<{ webhookUrl: string; webhookToken: string; fullWebhookUrl: string }> {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+
+    const connection = await repo.findOne({ where: { phoneNumberId, active: true } });
+    if (!connection) {
+      throw new Error('WhatsApp connection not found');
+    }
+
+    // Normalize URL (remove trailing slash)
+    const normalizedUrl = webhookUrl.replace(/\/$/, '');
+
+    // Ensure token exists
+    if (!connection.webhookToken) {
+      const crypto = require('crypto');
+      connection.webhookToken = crypto.randomBytes(32).toString('hex');
+    }
+
+    connection.webhookUrl = normalizedUrl;
+    await repo.save(connection);
+
+    // Generate full webhook URL with token as query parameter
+    // Include /v1 for API versioning
+    const fullWebhookUrl = `${normalizedUrl}/v1/webhook?verify_token=${connection.webhookToken!}`;
+
+    return {
+      webhookUrl: normalizedUrl,
+      webhookToken: connection.webhookToken!, // Non-null assertion since we ensure it exists above
+      fullWebhookUrl,
+    };
+  }
+
+  async getWebhookConfig(
+    tenantKey: string,
+    phoneNumberId: string,
+  ): Promise<{ webhookUrl: string; webhookToken: string; fullWebhookUrl: string; verified: boolean } | null> {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+
+    const connection = await repo.findOne({ where: { phoneNumberId, active: true } });
+    if (!connection || !connection.webhookUrl || !connection.webhookToken) {
+      return null;
+    }
+
+    // Include /v1 for API versioning
+    const fullWebhookUrl = `${connection.webhookUrl}/v1/webhook?verify_token=${connection.webhookToken}`;
+
+    return {
+      webhookUrl: connection.webhookUrl,
+      webhookToken: connection.webhookToken,
+      fullWebhookUrl,
+      verified: connection.webhookVerified || false,
+    };
+  }
 
 }

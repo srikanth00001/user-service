@@ -236,4 +236,40 @@ export class FacebookController {
   async webhook(@Body() payload: any) {
     return this.facebookService.handleWebhook(payload);
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // WEBHOOK URL MANAGEMENT
+  // ─────────────────────────────────────────────────────────────────
+  @UseGuards(JwtAuthGuard)
+  @Post('whatsapp-webhook-url')
+  async updateWhatsAppWebhookUrl(
+    @Req() req: any,
+    @Body() body: { phoneNumberId: string; webhookUrl: string },
+  ) {
+    const tenantKey = req.user.tenantKey;
+
+    if (!body.phoneNumberId || !body.webhookUrl) {
+      throw new BadRequestException('phoneNumberId and webhookUrl are required');
+    }
+
+    const result = await this.facebookService.updateWebhookUrl(
+      tenantKey,
+      body.phoneNumberId,
+      body.webhookUrl,
+    );
+
+    return { success: true, data: result };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('whatsapp-webhook-config/:phoneNumberId')
+  async getWhatsAppWebhookConfig(
+    @Req() req: any,
+    @Param('phoneNumberId') phoneNumberId: string,
+  ) {
+    const tenantKey = req.user.tenantKey;
+    const config = await this.facebookService.getWebhookConfig(tenantKey, phoneNumberId);
+
+    return { success: true, data: config };
+  }
 }

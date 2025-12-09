@@ -44,4 +44,16 @@ export class MetaConnection {
 
   @CreateDateColumn({ name: 'connected_at' })
   connectedAt: Date;
+
+  // ─────────────────────────────────────────────────────────────────
+  // WEBHOOK CONFIGURATION
+  // ─────────────────────────────────────────────────────────────────
+  @Column({ name: 'webhook_url', type: 'varchar', length: 500, nullable: true })
+  webhookUrl?: string;
+
+  @Column({ name: 'webhook_token', type: 'varchar', length: 128, nullable: true })
+  webhookToken?: string;
+
+  @Column({ name: 'webhook_verified', default: false })
+  webhookVerified: boolean;
 }

@@ -31,18 +31,57 @@ export class WebhookController {
   ) { }
 
   // ───────────────────────────────────────────────
-  // VERIFY WEBHOOK
+  // VERIFY WEBHOOK (TENANT-SPECIFIC + GLOBAL FALLBACK)
   // ───────────────────────────────────────────────
   @Get()
-  verifyWebhook(
+  async verifyWebhook(
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
   ) {
-    const VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN;
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    if (mode !== 'subscribe') {
+      throw new HttpException('Invalid mode', HttpStatus.BAD_REQUEST);
+    }
+
+    // 1. Check global token (backward compatibility)
+    const GLOBAL_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN;
+    if (GLOBAL_TOKEN && token === GLOBAL_TOKEN) {
+      this.logger.log('✅ Webhook verified using GLOBAL token');
       return challenge;
     }
+
+    // 2. Check tenant-specific tokens
+    // Meta doesn't send phone_number_id in verification request,
+    // so we need to check all tenant connections
+    try {
+      const masterDs = this.dbManager.getMasterDataSource();
+      const phoneTenantRepo = masterDs.getRepository(PhoneTenantMap);
+      const allMappings = await phoneTenantRepo.find();
+
+      for (const mapping of allMappings) {
+        try {
+          const tenantDs = await this.dbManager.getOrCreateTenantConnection(mapping.tenantKey);
+          const metaRepo = tenantDs.getRepository(MetaConnection);
+          const connections = await metaRepo.find({ where: { active: true } });
+
+          for (const connection of connections) {
+            if (connection.webhookToken === token) {
+              // Mark as verified
+              connection.webhookVerified = true;
+              await metaRepo.save(connection);
+              this.logger.log(`✅ Webhook verified for tenant: ${mapping.tenantKey}, phone: ${connection.phoneNumberId}`);
+              return challenge;
+            }
+          }
+        } catch (err) {
+          this.logger.error(`Error checking tenant ${mapping.tenantKey}:`, err);
+        }
+      }
+    } catch (err) {
+      this.logger.error('Error during tenant-specific verification:', err);
+    }
+
+    this.logger.warn(`❌ Webhook verification failed for token: ${token}`);
     throw new HttpException('Verification failed', HttpStatus.FORBIDDEN);
   }
 
