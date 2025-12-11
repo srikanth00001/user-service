@@ -310,7 +310,8 @@ export class LeadsService {
     // Check if the entity has deletedAt equivalent. 
     // TypeORM softRemove checks metadata.
 
-    return repo.softRemove(lead);
+    await repo.remove(lead);
+return { message: 'Lead deleted successfully' };
   }
 
   async importLeads(file: Express.Multer.File, userId: string, email: string) {
