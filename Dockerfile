@@ -19,6 +19,9 @@ COPY . .
 # Build NestJS project
 RUN npm run build
 
+ENV PORT=3004
+
+
 # Expose service port (change per service)
 EXPOSE 3004
 

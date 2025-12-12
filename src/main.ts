@@ -30,15 +30,29 @@ async function bootstrap() {
   });
 
   app.enableCors({
-    origin: ['http://localhost:3002', 'http://localhost:3003'],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: true,
-  });
+  origin: [
+    'http://localhost:3001',       // local frontend
+    'http://localhost:3002',       // local admin
+    'http://localhost:3003',
+    'http://localhost:3004',
+
+    'http://157.245.100.99',       // frontend via port 80
+    'http://157.245.100.99:80',
+
+    'http://157.245.100.99:81',    // admin panel
+    'http://157.245.100.99:85',    // auth
+    'http://157.245.100.99:86',    // user service
+  ],
+
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  credentials: true,
+});
+
 
 
 
   await app.startAllMicroservices(); // Start microservice
-  await app.listen(3004); // Start REST API
+  await app.listen(process.env.PORT || 3004, '0.0.0.0');// Start REST API
   console.log('REST API running on port 3004');
   console.log('TCP Microservice running on port 3005');
 }

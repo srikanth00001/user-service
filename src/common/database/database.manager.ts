@@ -43,10 +43,10 @@ export class DatabaseManager implements OnModuleInit {
 
   private readonly baseConfig: Omit<PostgresConnectionOptions, 'database'> = {
     type: 'postgres',
-    host: 'localhost',
-    port: 5432,
-    username: 'postgres',
-    password: 'Srikanth@03',
+    host: process.env.DB_HOST || '157.245.100.99',
+    port: parseInt(process.env.DB_PORT!) || 5432,
+    username: process.env.DB_USERNAME || 'dws_lrm',
+    password: process.env.DB_PASSWORD || 'ESveRyZVRzUrp30dTYnAyg==',
     synchronize: true,
     migrations: [__dirname + '/migrations/*{.ts,.js}'],
     logging: false,
@@ -70,7 +70,7 @@ export class DatabaseManager implements OnModuleInit {
     if (!this.masterDataSource) {
       const masterOpts: PostgresConnectionOptions = {
         ...this.baseConfig,
-        database: 'lead-crm',
+        database: process.env.DB_NAME,
         entities: [User, Role, PhoneTenantMap],
       };
       this.masterDataSource = new DataSource(masterOpts);
