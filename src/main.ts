@@ -30,23 +30,11 @@ async function bootstrap() {
   });
 
   app.enableCors({
-  origin: [
-    'http://localhost:3001',       // local frontend
-    'http://localhost:3002',       // local admin
-    'http://localhost:3003',
-    'http://localhost:3004',
-
-    'http://157.245.100.99',       // frontend via port 80
-    'http://157.245.100.99:80',
-
-    'http://157.245.100.99:81',    // admin panel
-    'http://157.245.100.99:85',    // auth
-    'http://157.245.100.99:86',    // user service
-  ],
-
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-  credentials: true,
+  origin: '*', // allow all
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  credentials: false, // must be false
 });
+
 
 
 
