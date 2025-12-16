@@ -82,7 +82,7 @@ export class FacebookController {
     // THIS IS THE KEY FIX
     if (payload.flow === 'whatsapp') {
       // WhatsApp flow → pass code & state to frontend
-      const frontendUrl = `http://localhost:3003/meta-leads?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+      const frontendUrl = `https://leadcrm.digiwebspot.com/meta-leads?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
       console.log('WhatsApp flow → redirecting to frontend with params');
       return res.redirect(frontendUrl);
     }
@@ -97,7 +97,7 @@ export class FacebookController {
     await this.facebookService.handleOAuthCallback(code, userId, tenantKey, email);
 
     // Clean redirect (no params)
-    return res.redirect('http://localhost:3003/meta-leads');
+    return res.redirect('https://leadcrm.digiwebspot.com/meta-leads');
   }
 
   @Post('whatsapp-oauth-callback')
