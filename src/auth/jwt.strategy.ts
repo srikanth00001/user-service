@@ -5,16 +5,21 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(configService: ConfigService) {
+  constructor(private readonly configService: ConfigService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: 'JWT_SECRET',
+      secretOrKey: configService.get<string>('JWT_SECRET'),
     });
   }
 
   async validate(payload: any) {
-    return { userId: payload.sub, email: payload.email, role: payload.role, tenantKey: payload.tenantKey,
-      isSubUser: payload.isSubUser ?? false, };
+    return {
+      userId: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      tenantKey: payload.tenantKey,
+      isSubUser: payload.isSubUser ?? false,
+    };
   }
 }

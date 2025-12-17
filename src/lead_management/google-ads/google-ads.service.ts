@@ -38,7 +38,6 @@ export class GoogleAdsService {
             item.column_name?.toLowerCase() === key.toLowerCase() ||
             item.column_id?.toLowerCase() === key.toLowerCase(),
         )?.string_value || null;
-
       const name = getValue('Full Name');
       const emailValue = getValue('User Email') || email;
       const phone = getValue('User Phone');
