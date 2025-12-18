@@ -311,12 +311,17 @@ export class LeadsService {
     // TypeORM softRemove checks metadata.
 
     await repo.remove(lead);
-return { message: 'Lead deleted successfully' };
+    return { message: 'Lead deleted successfully' };
   }
 
   async importLeads(file: Express.Multer.File, userId: string, email: string) {
-    if (!file?.mimetype.includes('spreadsheetml') && !file?.originalname.endsWith('.xlsx')) {
-      throw new HttpException('Invalid Excel file. Please upload .xlsx', HttpStatus.BAD_REQUEST);
+    if (
+      !file?.mimetype.includes('spreadsheetml') &&
+      !file?.mimetype.includes('csv') &&
+      !file?.mimetype.includes('text/plain') && // CSVs can be text/plain
+      !file?.originalname.match(/\.(xlsx|csv)$/)
+    ) {
+      throw new HttpException('Invalid file. Please upload .xlsx or .csv', HttpStatus.BAD_REQUEST);
     }
 
     const workbook = XLSX.read(file.buffer, { type: 'buffer' });
@@ -329,18 +334,48 @@ return { message: 'Lead deleted successfully' };
     let imported = 0;
     let skipped = 0;
 
+    // Helper to find value case-insensitively with aliases
+    const getValue = (row: any, aliases: string[]) => {
+      const keys = Object.keys(row);
+      for (const alias of aliases) {
+        // Exact match first
+        if (row[alias] !== undefined) return row[alias];
+        // Case-insensitive match
+        const foundKey = keys.find(k => k.trim().toLowerCase() === alias.toLowerCase());
+        if (foundKey) return row[foundKey];
+      }
+      return null;
+    };
+
+    const nameAliases = ['name', 'full name', 'fullname', 'lead name', 'contact name', 'person', 'customer name'];
+    const emailAliases = ['email', 'email address', 'mail', 'e-mail'];
+    const phoneAliases = ['phone', 'phone number', 'phonenumber', 'mobile', 'mobile number', 'contact', 'contact number', 'cell', 'cell phone'];
+    const extIdAliases = ['externalLeadId', 'external_lead_id', 'lead id', 'id'];
+    const pageIdAliases = ['pageId', 'page_id', 'page'];
+
     for (const row of jsonData as any[]) {
       try {
-        const lead = excelRepo.create({
-          externalLeadId: row.externalLeadId || `excel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: row.name || row.Name || null,
-          email: row.email || row.Email || null,
-          phone: row.phone || row.Phone || row.mobile || null,
-          pageId: row.pageId || row.page_id || null,
-          rawData: row,
-          createdBy: userId,
-          source: 'excel_import',
-        });
+        const name = getValue(row, nameAliases);
+        const emailVal = getValue(row, emailAliases);
+        const phone = getValue(row, phoneAliases);
+        const extId = getValue(row, extIdAliases);
+        const pageId = getValue(row, pageIdAliases);
+
+        // Required fields check: at least phone or email or name must exist to be useful, usually phone is critical for this system
+        if (!phone && !emailVal && !name) {
+          skipped++;
+          continue;
+        }
+
+        const lead = excelRepo.create();
+        lead.externalLeadId = extId ? String(extId) : `excel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        lead.name = name ? String(name) : undefined;
+        lead.email = emailVal ? String(emailVal) : undefined;
+        lead.phone = phone ? String(phone) : undefined;
+        lead.pageId = pageId ? String(pageId) : undefined;
+        lead.rawData = row;
+        lead.createdBy = userId;
+        lead.source = 'excel_import';
 
         await excelRepo.save(lead);
         imported++;
