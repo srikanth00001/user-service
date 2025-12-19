@@ -452,8 +452,9 @@ export class LeadsService {
         return ds.getRepository(GoogleAdsLead).findOne({ where: { id: leadId } });
       case 'google_form':
         return ds.getRepository(GoogleFormLead).findOne({ where: { id: leadId } });
-      case 'manual':
       case 'excel_import':
+        return ds.getRepository(ExcelLead).findOne({ where: { id: leadId } });
+      case 'manual':
       default:
         return ds.getRepository(Lead).findOne({ where: { id: leadId, source } });
     }
