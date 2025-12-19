@@ -84,7 +84,31 @@ export class LeadsService {
       roleName.toLowerCase().includes(r)
     );
 
-    const whereClause: any = isBusinessRole ? {} : { createdBy: userId };
+    // If NOT business role (e.g. Agent/Staff), we need to also fetch ASSIGNED leads
+    let assignedIdsBySource: Record<string, number[]> = {};
+    if (!isBusinessRole) {
+      const assignmentRepo = dataSource.getRepository(require('../../agent-assignment/entities/agent-assignment.entity').AgentAssignment);
+      const assignments = await assignmentRepo.find({ where: { assigned_agent_id: userId } });
+
+      for (const a of assignments) {
+        const src = a.leadSource;
+        assignedIdsBySource[src] = assignedIdsBySource[src] || [];
+        assignedIdsBySource[src].push(a.leadId);
+      }
+    }
+
+    const getWhere = (sourceKeys: string[]) => {
+      if (isBusinessRole) return {}; // Business sees all
+
+      // Collect all assigned IDs for these source keys
+      const assignedIds = sourceKeys.flatMap(k => assignedIdsBySource[k] || []);
+
+      // Return OR condition: Created by me OR Assigned to me
+      return [
+        { createdBy: userId },
+        assignedIds.length > 0 ? { id: In(assignedIds) } : undefined
+      ].filter(Boolean); // Remove undefineds
+    };
 
     const [manual, meta, gads, gform, excel] = await Promise.all([
       // Manual Leads
@@ -97,7 +121,7 @@ export class LeadsService {
           externalLeadId: true,
           createdAt: true,
         },
-        where: whereClause,
+        where: getWhere(['manual', 'lead']),
         relations: ['campaign'],
       }),
 
@@ -110,11 +134,11 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: whereClause,
+        where: getWhere(['meta', 'facebook', 'instagram']),
         relations: ['campaign'],
       }),
 
-      // Google Ads Leads - CRITICAL FIX
+      // Google Ads Leads
       dataSource.getRepository(GoogleAdsLead).find({
         select: {
           id: true,
@@ -122,10 +146,10 @@ export class LeadsService {
           name: true,
           email: true,
           phone: true,
-          createdAt: true,           // This was missing!
+          createdAt: true,
         },
-        relations: ['campaign'],       // To get campaign.name
-        where: whereClause,
+        relations: ['campaign'],
+        where: getWhere(['google_ads', 'google-ads', 'google ad']),
       }),
 
       // Google Form Leads
@@ -137,7 +161,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: whereClause,
+        where: getWhere(['google_form', 'google-form', 'google form']),
         relations: ['campaign'],
       }),
 
@@ -150,7 +174,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: whereClause,
+        where: getWhere(['excel_import', 'excel', 'csv']),
       }),
     ]);
 
