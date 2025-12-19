@@ -107,8 +107,8 @@ export class LeadsController {
   @Get('all')
   @UseGuards(JwtAuthGuard)
   async getAll(@Req() req: any) {
-    const { userId, email } = this.getUser(req);
-    return this.leadsService.getAllSources(userId, email);
+    const { userId, email, role } = this.getUser(req);
+    return this.leadsService.getAllSources(userId, email, role);
   }
 
   @UseGuards(JwtAuthGuard)

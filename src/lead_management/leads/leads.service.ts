@@ -7,7 +7,7 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import { BusinessUser } from '../../business-user/entities/business-user.entity';
 import { Lead } from './entities/lead.entity';
 import { Note } from './entities/note.entity';
@@ -76,8 +76,15 @@ export class LeadsService {
     });
   }
 
-  async getAllSources(userId: string, email: string) {
-    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+  async getAllSources(userId: string, email: string, role?: string) {
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email, role });
+    // Determine visibility based on role
+    const roleName = typeof role === 'object' ? (role as any)?.name : role;
+    const isBusinessRole = roleName && ['owner', 'manager', 'business'].some(r =>
+      roleName.toLowerCase().includes(r)
+    );
+
+    const whereClause: any = isBusinessRole ? {} : { createdBy: userId };
 
     const [manual, meta, gads, gform, excel] = await Promise.all([
       // Manual Leads
@@ -90,7 +97,7 @@ export class LeadsService {
           externalLeadId: true,
           createdAt: true,
         },
-        where: { createdBy: userId },
+        where: whereClause,
         relations: ['campaign'],
       }),
 
@@ -103,7 +110,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: { createdBy: userId },
+        where: whereClause,
         relations: ['campaign'],
       }),
 
@@ -118,7 +125,7 @@ export class LeadsService {
           createdAt: true,           // This was missing!
         },
         relations: ['campaign'],       // To get campaign.name
-        where: { createdBy: userId },
+        where: whereClause,
       }),
 
       // Google Form Leads
@@ -130,7 +137,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: { createdBy: userId },
+        where: whereClause,
         relations: ['campaign'],
       }),
 
@@ -143,7 +150,7 @@ export class LeadsService {
           phone: true,
           createdAt: true,
         },
-        where: { createdBy: userId },
+        where: whereClause,
       }),
     ]);
 
@@ -239,24 +246,37 @@ export class LeadsService {
       });
     };
 
-    if (idsBySource.manual?.length) {
-      const rows = await dataSource.getRepository(Lead).find({ where: idsBySource.manual.map((id) => ({ id })) });
+    const getIds = (keys: string[]) => {
+      return keys.flatMap(k => idsBySource[k] || []);
+    };
+
+    const manualIds = getIds(['manual', 'lead']);
+    if (manualIds.length) {
+      const rows = await dataSource.getRepository(Lead).find({ where: { id: In(manualIds) } });
       pushMapped(rows, 'manual', 'Manual Entry');
     }
-    if (idsBySource.meta?.length) {
-      const rows = await dataSource.getRepository(MetaLead).find({ where: idsBySource.meta.map((id) => ({ id })) });
+
+    const metaIds = getIds(['meta', 'facebook', 'instagram']);
+    if (metaIds.length) {
+      const rows = await dataSource.getRepository(MetaLead).find({ where: { id: In(metaIds) } });
       pushMapped(rows, 'meta', 'Meta Ads');
     }
-    if (idsBySource.google_ads?.length) {
-      const rows = await dataSource.getRepository(GoogleAdsLead).find({ where: idsBySource.google_ads.map((id) => ({ id })) });
+
+    const gadsIds = getIds(['google_ads', 'google-ads', 'google ad']);
+    if (gadsIds.length) {
+      const rows = await dataSource.getRepository(GoogleAdsLead).find({ where: { id: In(gadsIds) } });
       pushMapped(rows, 'google_ads', 'Google Ads');
     }
-    if (idsBySource.google_form?.length) {
-      const rows = await dataSource.getRepository(GoogleFormLead).find({ where: idsBySource.google_form.map((id) => ({ id })) });
+
+    const gformIds = getIds(['google_form', 'google-form', 'google form', 'google_forms']);
+    if (gformIds.length) {
+      const rows = await dataSource.getRepository(GoogleFormLead).find({ where: { id: In(gformIds) } });
       pushMapped(rows, 'google_form', 'Google Form');
     }
-    if (idsBySource.excel_import?.length) {
-      const rows = await dataSource.getRepository(ExcelLead).find({ where: idsBySource.excel_import.map((id) => ({ id })) });
+
+    const excelIds = getIds(['excel_import', 'excel', 'excel-import', 'csv']);
+    if (excelIds.length) {
+      const rows = await dataSource.getRepository(ExcelLead).find({ where: { id: In(excelIds) } });
       pushMapped(rows, 'excel_import', 'Excel Import');
     }
 
