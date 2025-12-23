@@ -108,7 +108,16 @@ export class UserService {
   }
 
   async findUserById(id: string) {
-    return this.getUser(id);
+    // First, try to find in master database
+    const masterUser = await this.userRepository.findOne({
+      where: { id },
+      relations: ['role'],
+    });
+    if (masterUser) return masterUser;
+
+    // If not found in master, search in tenant databases (business sub-users)
+    const businessUser = await this.findBusinessUserById(id);
+    return businessUser;
   }
 
   async findUserByEmailVerificationToken(token: string) {
