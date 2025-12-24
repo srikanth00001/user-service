@@ -6,7 +6,7 @@ import { Constants } from 'src/common/constants';
 
 @Controller({ path: 'user', version: Constants.API_VERSION })
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(private readonly userService: UserService) { }
 
   @UseGuards(JwtAuthGuard)
   @Post()
@@ -49,8 +49,8 @@ export class UserController {
   }
 
   @MessagePattern({ cmd: 'findUserById' })
-  async findUserById(id: string) {
-    return this.userService.findUserById(id);
+  async findUserById(data: { id: string; tenantKey?: string; isSubUser?: boolean } | string) {
+    return (this.userService as any).findUserById(data);
   }
 
   @MessagePattern({ cmd: 'findUserByEmailVerificationToken' })
@@ -74,7 +74,7 @@ export class UserController {
   }
 
   @MessagePattern({ cmd: 'updateUserByMicroservice' })
-  async updateUserByMicroservice(data: { id: string; passwordAlreadyHashed?: boolean; [key: string]: any }) {
+  async updateUserByMicroservice(data: { id: string; passwordAlreadyHashed?: boolean;[key: string]: any }) {
     return this.userService.updateUser(data.id, data, data.passwordAlreadyHashed);
   }
 
@@ -84,14 +84,14 @@ export class UserController {
   }
 
   @MessagePattern({ cmd: 'findBusinessUserByEmail' })
-async findBusinessUserByEmail(email: string) {
-  return this.userService.findBusinessUserByEmail(email);
-}
+  async findBusinessUserByEmail(email: string) {
+    return this.userService.findBusinessUserByEmail(email);
+  }
 
-@MessagePattern({ cmd: 'seedBusinessTenant' })
-async seedBusinessTenant(data: any) {
-  return this.userService.seedBusinessTenant(data);
-}
+  @MessagePattern({ cmd: 'seedBusinessTenant' })
+  async seedBusinessTenant(data: any) {
+    return this.userService.seedBusinessTenant(data);
+  }
 
 
 

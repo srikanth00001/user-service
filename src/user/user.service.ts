@@ -107,17 +107,31 @@ export class UserService {
     return this.userRepository.findOne({ where: [{ email }, { mobileNumber }], relations: ['role'] });
   }
 
-  async findUserById(id: string) {
-    // First, try to find in master database
+  async findUserById(data: { id: string; tenantKey?: string; isSubUser?: boolean } | string) {
+    const id = typeof data === 'string' ? data : data.id;
+    const tenantKey = typeof data === 'object' ? data.tenantKey : undefined;
+    const isSubUser = typeof data === 'object' ? data.isSubUser : false;
+
+    // 1. If we have tenantKey and it's a subuser, prioritize tenant DB
+    if (tenantKey && isSubUser) {
+      const businessUser = await this.findBusinessUserById(id, tenantKey);
+      if (businessUser) return businessUser;
+    }
+
+    // 2. Try master database
     const masterUser = await this.userRepository.findOne({
       where: { id },
       relations: ['role'],
     });
     if (masterUser) return masterUser;
 
-    // If not found in master, search in tenant databases (business sub-users)
-    const businessUser = await this.findBusinessUserById(id);
-    return businessUser;
+    // 3. Fallback: search in tenant databases if not already searched with tenantKey
+    if (!tenantKey || !isSubUser) {
+      const businessUser = await this.findBusinessUserById(id);
+      return businessUser;
+    }
+
+    return null;
   }
 
   async findUserByEmailVerificationToken(token: string) {
@@ -204,9 +218,23 @@ export class UserService {
   }
 
   // 🔹 Find business user by ID inside tenant DB  
-  async findBusinessUserById(id: string): Promise<BusinessUser | null> {
-    // We need to iterate through all tenant connections to find the user
-    // This is because we don't know which tenant the user belongs to from just the ID
+  async findBusinessUserById(id: string, tenantKey?: string): Promise<BusinessUser | null> {
+    // If tenantKey is provided, look in that specific DB
+    if (tenantKey) {
+      try {
+        const tenantDataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+        const businessUserRepo = tenantDataSource.getRepository(BusinessUser);
+        const user = await businessUserRepo.findOne({
+          where: { id },
+          relations: ['role'],
+        });
+        if (user) return user;
+      } catch (error) {
+        console.warn(`Error fetching business user for ${id} in ${tenantKey}: ${error.message}`);
+      }
+    }
+
+    // Otherwise, fallback to iterating through all active connections
     const connections = Array.from(this.dbManager['connections'].values());
 
     for (const { dataSource } of connections) {
