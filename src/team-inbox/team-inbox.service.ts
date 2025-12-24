@@ -121,6 +121,7 @@ export class TeamInboxService {
         phone_number: normalizedPhone,
         lead_name: data.name || lead.name,
         business_phone_number_id: data.businessPhoneNumberId,
+        initiated_by: 'customer', // Customer initiated the conversation
       } as any;
       conv = (await this.conversationService.create(data.tenantKey, dto, 'system', 'system')).data;
     }

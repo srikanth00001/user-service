@@ -102,6 +102,7 @@ export class ConversationService {
       business_phone_number_id: dto.business_phone_number_id || null,
       business_display_phone_number: dto.business_display_phone_number || connection?.displayPhoneNumber || null,
       channel: 'whatsapp',
+      initiated_by: (dto as any).initiated_by || 'tenant',
     });
 
     const saved = await convRepo.save(conv);
@@ -201,6 +202,7 @@ export class ConversationService {
         topic: conv.topic,
         channel: conv.channel,
         sentiment: conv.sentiment,
+        initiated_by: conv.initiated_by || 'tenant',
         createdBy: conv.createdBy,
         created_at: conv.created_at,
         updated_at: conv.updated_at,

@@ -49,6 +49,9 @@ export class Conversation {
   @Column({ nullable: true })
   sentiment: 'Happy' | 'Neutral' | 'Angry';
 
+  @Column({ default: 'tenant' })
+  initiated_by: 'tenant' | 'customer';
+
   @Column({ nullable: true })
   createdBy: string;
 
