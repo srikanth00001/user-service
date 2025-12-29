@@ -17,8 +17,8 @@ export class TeamInboxController {
 
   @Get('conversations')
   async getConversations(@Req() req: any) {
-    const { userId, email, tenantKey } = this.getUser(req);
-    return this.teamInboxService.getConversations(tenantKey, userId, email);
+    const { userId, email, tenantKey, role } = this.getUser(req);
+    return this.teamInboxService.getConversations(tenantKey, userId, email, role);
   }
 
   @Get('messages/:conversationId')
