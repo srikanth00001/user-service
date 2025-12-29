@@ -1,4 +1,3 @@
-// src/team-inbox/team-inbox.controller.ts
 import { Controller, Get, Post, Body, Param, UseGuards, Req, ParseIntPipe } from '@nestjs/common';
 import { TeamInboxService } from './team-inbox.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
@@ -17,8 +16,8 @@ export class TeamInboxController {
 
   @Get('conversations')
   async getConversations(@Req() req: any) {
-    const { userId, email, tenantKey, role } = this.getUser(req);
-    return this.teamInboxService.getConversations(tenantKey, userId, email, role);
+    const { userId, email, tenantKey } = this.getUser(req);
+    return this.teamInboxService.getConversations(tenantKey, userId, email);
   }
 
   @Get('messages/:conversationId')

@@ -1,4 +1,3 @@
-// src/team-inbox/team-inbox.service.ts
 import {
   Injectable,
   BadRequestException,
@@ -126,8 +125,6 @@ export class TeamInboxService {
       conv = (await this.conversationService.create(data.tenantKey, dto, 'system', 'system')).data;
     }
 
-    // Auto-assign agent if assignment rule exists
-    // Business owners will still see all conversations (including assigned ones)
     const assignment = await this.agentAssignmentService.findByLead(data.tenantKey, lead.id, leadSource);
     if (assignment && conv.assigned_agent_id !== assignment.assigned_agent_id) {
       await dataSource.getRepository(Conversation).update(conv.id, {
@@ -135,7 +132,6 @@ export class TeamInboxService {
       });
       conv.assigned_agent_id = assignment.assigned_agent_id;
     }
-    // Note: Even if assigned, business owners (main DB role="business") will see all conversations
 
     const msgDto: CreateMessageDto = {
       conversation_id: conv.id,
@@ -157,35 +153,11 @@ export class TeamInboxService {
     return { success: true, data: msg };
   }
 
-  async getConversations(tenantKey: string, userId: string, email: string, role?: any) {
-    // Check tenant DB first (for business-users/agents)
-    let user = await this.businessUserService.findById(tenantKey, userId);
-    let userRole = role;
-    
-    // If not found in tenant DB, check main DB (for business owners)
-    if (!user) {
-      const masterDs = this.dbManager.getMasterDataSource();
-      const masterUserRepo = masterDs.getRepository(User);
-      user = await masterUserRepo.findOne({
-        where: { id: userId, tenantKey },
-        relations: ['role'],
-      });
-      
-      // Get role from main DB user if found
-      if (user && user.role) {
-        userRole = user.role.name;
-      }
-    } else {
-      // Get role from tenant DB user
-      if (user.role) {
-        userRole = user.role.name;
-      }
-    }
-    
+  async getConversations(tenantKey: string, userId: string, email: string) {
+    const user = await this.businessUserService.findById(tenantKey, userId);
     if (!user) throw new NotFoundException('User not found');
 
-    // Pass user role to conversation service
-    return await this.conversationService.findAll(tenantKey, userId, email, userRole);
+    return await this.conversationService.findAll(tenantKey, userId, email);
   }
 
   async getMessages(tenantKey: string, conversationId: number, userId: string, email: string) {
@@ -340,3 +312,5 @@ export class TeamInboxService {
     };
   }
 }
+
+
