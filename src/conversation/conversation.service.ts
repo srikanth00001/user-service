@@ -128,15 +128,12 @@ export class ConversationService {
     const roleName = String(typeof role === 'object' ? role?.name : role || '').toLowerCase();
 
     // 1. Privileged: Can see EVERYTHING
-    // Note: Removed 'business' generic match to prevent 'business_user' from seeing all.
+    // 1. Privileged: Can see EVERYTHING (Owners/Managers/Admins)
+    // Note: 'business' role is NOT completely privileged - they should see assigned OR unassigned customer-initiated
     const isPrivileged = ['owner', 'manager', 'admin'].some((r) => roleName.includes(r));
 
     // 2. Staff/Agent: Can see ASSIGNED ONLY
-    const isStaff = ['staff', 'agent', 'business_user'].some((r) => roleName.includes(r));
-
-    // 3. Personal: Can see CREATED ONLY
-    // Default fallback for anyone else (e.g. 'user', 'personal')
-    const isPersonal = !isPrivileged && !isStaff;
+    const isStaff = ['staff', 'agent'].some((r) => roleName.includes(r));
 
     const query = convRepo.createQueryBuilder('conv')
       .leftJoinAndSelect(
@@ -154,13 +151,20 @@ export class ConversationService {
 
     // ── Filter Logic ──
     if (isPrivileged) {
-      // No filter: Owners/Managers see ALL
+      // Owners/Managers see ALL
     } else if (isStaff) {
-      // Staff/Business Users see ONLY conversations assigned to them
+      // Staff Agents see ONLY conversations assigned to them
       query.andWhere('conv.assigned_agent_id = :userId', { userId });
     } else {
-      // Personal users see ONLY conversations they created
-      query.andWhere('conv.createdBy = :userId', { userId });
+      // Business/Personal Users (everyone else)
+      // 1. See conversations assigned to them (if any)
+      // 2. See conversations they created (outbound)
+      // 3. See conversations initiated by CUSTOMER that are UNASSIGNED (start of new chat)
+      // 4. See conversations initiated by CUSTOMER that are assigned to THEM
+      query.andWhere(
+        '(conv.assigned_agent_id = :userId OR conv.createdBy = :userId OR (conv.initiated_by = :custInit AND conv.assigned_agent_id IS NULL))',
+        { userId, custInit: 'customer' }
+      );
     }
 
     const conversationsWithLastMessage = await query.getRawMany();
