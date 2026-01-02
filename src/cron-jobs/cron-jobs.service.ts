@@ -1,10 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual } from 'typeorm';
+import { Repository, LessThanOrEqual, DataSource } from 'typeorm';
 import { Subscription } from 'src/subscription/entities/subscription.entity';
 import axios from 'axios';
 import { SubscriptionStatus } from '../subscription/entities/subscription.entity';
+import { Conversation } from 'src/conversation/entities/conversation.entity';
+import { Lead } from 'src/lead_management/leads/entities/lead.entity';
+import { BusinessUser } from 'src/business-user/entities/business-user.entity';
+import { User } from 'src/user/entities/user.entity';
+import { EmailService } from 'src/common/email/email.service';
+import { DatabaseManager, TenantConnection } from 'src/common/database/database.manager';
 
 @Injectable()
 export class CronJobsService {
@@ -13,6 +19,8 @@ export class CronJobsService {
   constructor(
     @InjectRepository(Subscription)
     private subscriptionRepository: Repository<Subscription>,
+    private emailService: EmailService,
+    private dbManager: DatabaseManager,
   ) {}
 
   @Cron('50 15 * * *')
@@ -129,5 +137,117 @@ export class CronJobsService {
     console.error(`Webhook failed for ${eventType}:`, error.message);
   }
 }
+
+  // ─────────────────────────────────────────────────────────────────
+  // CONVERSATION REMINDER CRON JOB
+  // ─────────────────────────────────────────────────────────────────
+  @Cron('*/5 * * * *') // Run every 5 minutes
+  async checkConversationReminders() {
+    this.logger.log('Checking for due conversation reminders...');
+    
+    try {
+      const now = new Date();
+      
+      // Get all tenant connections
+      // Access the private connections map via type assertion
+      const connections = Array.from((this.dbManager as any).connections.values()) as TenantConnection[];
+      
+      for (const { dataSource, name: tenantKey } of connections) {
+        try {
+          const convRepo = dataSource.getRepository(Conversation);
+          const leadRepo = dataSource.getRepository(Lead);
+          
+          // Find conversations with scheduled_at <= now and reminder_sent = false
+          const dueConversations = await convRepo.find({
+            where: {
+              scheduled_at: LessThanOrEqual(now),
+              reminder_sent: false,
+              active: true,
+            },
+          });
+          
+          if (dueConversations.length === 0) {
+            continue;
+          }
+          
+          this.logger.log(`Found ${dueConversations.length} due reminders in tenant: ${tenantKey}`);
+          
+          for (const conv of dueConversations) {
+            try {
+              // Get lead details
+              const lead = await leadRepo.findOne({ where: { id: conv.lead_id } });
+              if (!lead) {
+                this.logger.warn(`Lead not found for conversation ${conv.id}`);
+                continue;
+              }
+              
+              // Determine recipient
+              let recipientEmail: string | null = null;
+              let recipientName: string = 'User';
+              
+              // Priority: 1. Assigned agent, 2. Business owner (main DB)
+              if (conv.assigned_agent_id) {
+                // Get agent from tenant DB
+                const agentRepo = dataSource.getRepository(BusinessUser);
+                const agent = await agentRepo.findOne({ where: { id: conv.assigned_agent_id } });
+                if (agent) {
+                  recipientEmail = agent.email;
+                  recipientName = `${agent.firstName} ${agent.lastName || ''}`.trim();
+                }
+              }
+              
+              // If no agent or agent not found, get business owner from main DB
+              if (!recipientEmail) {
+                const masterDs = this.dbManager.getMasterDataSource();
+                const userRepo = masterDs.getRepository(User);
+                // Use query builder to properly join and filter by role name
+                const businessOwner = await userRepo
+                  .createQueryBuilder('user')
+                  .leftJoinAndSelect('user.role', 'role')
+                  .where('user.tenantKey = :tenantKey', { tenantKey })
+                  .andWhere('role.name = :roleName', { roleName: 'business' })
+                  .getOne();
+                if (businessOwner) {
+                  recipientEmail = businessOwner.email;
+                  recipientName = `${businessOwner.firstName} ${businessOwner.lastName || ''}`.trim();
+                }
+              }
+              
+              if (!recipientEmail) {
+                this.logger.warn(`No recipient found for conversation ${conv.id}`);
+                continue;
+              }
+              
+              // Send reminder email
+              const emailSent = await this.emailService.sendReminderEmail(
+                recipientEmail,
+                recipientName,
+                {
+                  leadName: lead.name || conv.lead_name || 'Unknown',
+                  phone: lead.phone || conv.phone_number || 'N/A',
+                  email: lead.email || undefined,
+                  scheduledAt: conv.scheduled_at!,
+                  conversationId: conv.id,
+                  tenantKey,
+                },
+              );
+              
+              if (emailSent) {
+                // Mark reminder as sent
+                await convRepo.update(conv.id, { reminder_sent: true });
+                this.logger.log(`✅ Reminder sent for conversation ${conv.id} to ${recipientEmail}`);
+              }
+            } catch (error) {
+              this.logger.error(`Error processing reminder for conversation ${conv.id}:`, error);
+            }
+          }
+        } catch (error) {
+          this.logger.error(`Error checking reminders for tenant ${tenantKey}:`, error);
+        }
+      }
+    } catch (error) {
+      this.logger.error('Error in checkConversationReminders:', error);
+    }
+  }
 
 }

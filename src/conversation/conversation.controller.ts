@@ -84,6 +84,16 @@ export class ConversationController {
     return this.conversationService.advancedFilter(tenantKey, filters, userId, email);
   }
 
+  @Patch(':id/schedule')
+  async setSchedule(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { scheduled_at?: string },
+    @Req() req: any,
+  ) {
+    const { userId, email, tenantKey } = this.getUser(req);
+    return this.conversationService.update(tenantKey, id, { scheduled_at: body.scheduled_at }, userId, email);
+  }
+
   private getUser(req: any) {
     return {
       userId: req.user?.userId || req.user?.sub || req.user?.id,

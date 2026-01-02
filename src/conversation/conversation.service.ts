@@ -210,6 +210,8 @@ export class ConversationService {
         created_at: conv.created_at,
         updated_at: conv.updated_at,
         deleted_at: conv.deleted_at,
+        scheduled_at: conv.scheduled_at,
+        reminder_sent: conv.reminder_sent,
 
         // From subquery
         last_message: conv.last_message_content?.trim() || null,
@@ -266,7 +268,18 @@ export class ConversationService {
       if (!agent) throw new NotFoundException('Assigned agent not found');
     }
 
-    const result = await convRepo.update(id, dto);
+    // Prepare update data
+    const updateData: any = {};
+    if (dto.assigned_agent_id !== undefined) {
+      updateData.assigned_agent_id = dto.assigned_agent_id;
+    }
+    if (dto.scheduled_at !== undefined) {
+      // If scheduled_at is provided, parse it and reset reminder_sent
+      updateData.scheduled_at = dto.scheduled_at ? new Date(dto.scheduled_at) : null;
+      updateData.reminder_sent = false; // Reset reminder when schedule is updated
+    }
+
+    const result = await convRepo.update(id, updateData);
     if (result.affected === 0) throw new NotFoundException('Conversation not found');
 
     const updated = await convRepo.findOne({ where: { id } });

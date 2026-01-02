@@ -55,6 +55,12 @@ export class Conversation {
   @Column({ nullable: true })
   createdBy: string;
 
+  @Column({ type: 'timestamp', nullable: true })
+  scheduled_at: Date | null;
+
+  @Column({ type: 'boolean', default: false })
+  reminder_sent: boolean;
+
   @CreateDateColumn()
   created_at: Date;
 
