@@ -152,19 +152,31 @@ export class CronJobsService {
       const now = new Date();
       this.logger.log(`Current time (UTC): ${now.toISOString()}`);
       
-      // Get all tenant connections
-      // Access the private connections map via type assertion
-      const connections = Array.from((this.dbManager as any).connections.values()) as TenantConnection[];
+      // Get all unique tenant keys from master database
+      const masterDs = this.dbManager.getMasterDataSource();
+      const userRepo = masterDs.getRepository(User);
       
-      if (connections.length === 0) {
-        this.logger.warn('⚠️ No tenant connections found. Cron job will check when connections are available.');
+      // Get all unique tenant keys from users
+      const allTenantKeys = await userRepo
+        .createQueryBuilder('user')
+        .select('DISTINCT user.tenantKey', 'tenantKey')
+        .where('user.tenantKey IS NOT NULL')
+        .getRawMany();
+      
+      const tenantKeys = allTenantKeys.map(row => row.tenantKey).filter(Boolean);
+      
+      if (tenantKeys.length === 0) {
+        this.logger.warn('⚠️ No tenant keys found in master database.');
         return;
       }
       
-      this.logger.log(`Found ${connections.length} tenant connection(s) to check`);
+      this.logger.log(`Found ${tenantKeys.length} tenant(s) to check: ${tenantKeys.join(', ')}`);
       
-      for (const { dataSource, name: tenantKey } of connections) {
+      // Check each tenant database
+      for (const tenantKey of tenantKeys) {
         try {
+          // Get or create connection for this tenant
+          const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
           this.logger.log(`Checking tenant: ${tenantKey}`);
           const convRepo = dataSource.getRepository(Conversation);
           const leadRepo = dataSource.getRepository(Lead);
@@ -230,8 +242,6 @@ export class CronJobsService {
               
               // If no agent or agent not found, get business owner from main DB
               if (!recipientEmail) {
-                const masterDs = this.dbManager.getMasterDataSource();
-                const userRepo = masterDs.getRepository(User);
                 // Use query builder to properly join and filter by role name
                 const businessOwner = await userRepo
                   .createQueryBuilder('user')
