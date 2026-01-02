@@ -275,7 +275,21 @@ export class ConversationService {
     }
     if (dto.scheduled_at !== undefined) {
       // If scheduled_at is provided, parse it and reset reminder_sent
-      updateData.scheduled_at = dto.scheduled_at ? new Date(dto.scheduled_at) : null;
+      // The date string comes from frontend in format YYYY-MM-DDTHH:mm:ss (user's local time, typically IST)
+      // We interpret it as IST (Asia/Kolkata) and convert to UTC for storage
+      if (dto.scheduled_at) {
+        // Parse the date string and interpret it as IST (UTC+5:30)
+        // Format: YYYY-MM-DDTHH:mm:ss
+        const dateStr = dto.scheduled_at;
+        // Create date in IST timezone, then convert to Date object (which will be in UTC)
+        // Append timezone offset for IST: +05:30
+        const istDateStr = dateStr.endsWith('Z') || dateStr.includes('+') || dateStr.includes('-', 10)
+          ? dateStr
+          : `${dateStr}+05:30`; // Add IST offset if not present
+        updateData.scheduled_at = new Date(istDateStr);
+      } else {
+        updateData.scheduled_at = null;
+      }
       updateData.reminder_sent = false; // Reset reminder when schedule is updated
     }
 
