@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThanOrEqual, DataSource } from 'typeorm';
+import { Repository, LessThanOrEqual, DataSource, Not, IsNull } from 'typeorm';
 import { Subscription } from 'src/subscription/entities/subscription.entity';
 import axios from 'axios';
 import { SubscriptionStatus } from '../subscription/entities/subscription.entity';
@@ -21,7 +21,10 @@ export class CronJobsService {
     private subscriptionRepository: Repository<Subscription>,
     private emailService: EmailService,
     private dbManager: DatabaseManager,
-  ) {}
+  ) {
+    // Log that cron jobs are initialized
+    this.logger.log('✅ CronJobsService initialized - Conversation reminder cron will run every 5 minutes');
+  }
 
   @Cron('50 15 * * *')
 
@@ -143,21 +146,31 @@ export class CronJobsService {
   // ─────────────────────────────────────────────────────────────────
   @Cron('*/5 * * * *') // Run every 5 minutes
   async checkConversationReminders() {
-    this.logger.log('Checking for due conversation reminders...');
+    this.logger.log('⏰ [CRON] Checking for due conversation reminders...');
     
     try {
       const now = new Date();
+      this.logger.log(`Current time (UTC): ${now.toISOString()}`);
       
       // Get all tenant connections
       // Access the private connections map via type assertion
       const connections = Array.from((this.dbManager as any).connections.values()) as TenantConnection[];
       
+      if (connections.length === 0) {
+        this.logger.warn('⚠️ No tenant connections found. Cron job will check when connections are available.');
+        return;
+      }
+      
+      this.logger.log(`Found ${connections.length} tenant connection(s) to check`);
+      
       for (const { dataSource, name: tenantKey } of connections) {
         try {
+          this.logger.log(`Checking tenant: ${tenantKey}`);
           const convRepo = dataSource.getRepository(Conversation);
           const leadRepo = dataSource.getRepository(Lead);
           
           // Find conversations with scheduled_at <= now and reminder_sent = false
+          // Using UTC time for comparison since scheduled_at is stored as timestamptz (UTC)
           const dueConversations = await convRepo.find({
             where: {
               scheduled_at: LessThanOrEqual(now),
@@ -166,11 +179,30 @@ export class CronJobsService {
             },
           });
           
+          this.logger.log(`Tenant ${tenantKey}: Found ${dueConversations.length} conversation(s) with scheduled reminders`);
+          
           if (dueConversations.length === 0) {
+            // Log all scheduled conversations for debugging
+            const allScheduled = await convRepo.find({
+              where: {
+                scheduled_at: Not(IsNull()),
+                reminder_sent: false,
+                active: true,
+              },
+              select: ['id', 'scheduled_at', 'reminder_sent'],
+            });
+            if (allScheduled.length > 0) {
+              this.logger.log(`Tenant ${tenantKey}: ${allScheduled.length} scheduled conversation(s) found, but none are due yet:`);
+              allScheduled.forEach(c => {
+                const scheduledTime = c.scheduled_at ? new Date(c.scheduled_at).toISOString() : 'null';
+                const isDue = c.scheduled_at && new Date(c.scheduled_at) <= now;
+                this.logger.log(`  - Conversation ${c.id}: scheduled_at=${scheduledTime}, now=${now.toISOString()}, isDue=${isDue}`);
+              });
+            }
             continue;
           }
           
-          this.logger.log(`Found ${dueConversations.length} due reminders in tenant: ${tenantKey}`);
+          this.logger.log(`✅ Found ${dueConversations.length} due reminder(s) in tenant: ${tenantKey}`);
           
           for (const conv of dueConversations) {
             try {
@@ -219,6 +251,7 @@ export class CronJobsService {
               }
               
               // Send reminder email
+              this.logger.log(`Sending reminder email for conversation ${conv.id} to ${recipientEmail}...`);
               const emailSent = await this.emailService.sendReminderEmail(
                 recipientEmail,
                 recipientName,
@@ -235,10 +268,13 @@ export class CronJobsService {
               if (emailSent) {
                 // Mark reminder as sent
                 await convRepo.update(conv.id, { reminder_sent: true });
-                this.logger.log(`✅ Reminder sent for conversation ${conv.id} to ${recipientEmail}`);
+                this.logger.log(`✅ Reminder sent successfully for conversation ${conv.id} to ${recipientEmail}`);
+              } else {
+                this.logger.error(`❌ Failed to send reminder email for conversation ${conv.id} to ${recipientEmail}`);
               }
             } catch (error) {
-              this.logger.error(`Error processing reminder for conversation ${conv.id}:`, error);
+              this.logger.error(`❌ Error processing reminder for conversation ${conv.id}:`, error);
+              this.logger.error(`Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
             }
           }
         } catch (error) {
