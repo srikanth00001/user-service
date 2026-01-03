@@ -183,6 +183,27 @@ export class CronJobsService {
           
           // Find conversations with scheduled_at <= now and reminder_sent = false
           // Using UTC time for comparison since scheduled_at is stored as timestamptz (UTC)
+          this.logger.log(`Tenant ${tenantKey}: Querying for due conversations (scheduled_at <= ${now.toISOString()})...`);
+          
+          // Also try a raw query to see what's in the database
+          const rawScheduled = await convRepo
+            .createQueryBuilder('conv')
+            .where('conv.scheduled_at IS NOT NULL')
+            .andWhere('conv.reminder_sent = false')
+            .andWhere('conv.active = true')
+            .select(['conv.id', 'conv.scheduled_at', 'conv.reminder_sent', 'conv.lead_name'])
+            .getMany();
+          
+          if (rawScheduled.length > 0) {
+            this.logger.log(`Tenant ${tenantKey}: Raw query found ${rawScheduled.length} scheduled conversation(s):`);
+            rawScheduled.forEach(c => {
+              const scheduledTime = c.scheduled_at ? new Date(c.scheduled_at).toISOString() : 'null';
+              const scheduledDate = c.scheduled_at ? new Date(c.scheduled_at) : null;
+              const isDue = scheduledDate && scheduledDate <= now;
+              this.logger.log(`  - Conversation ${c.id}: scheduled_at=${scheduledTime}, isDue=${isDue}`);
+            });
+          }
+          
           const dueConversations = await convRepo.find({
             where: {
               scheduled_at: LessThanOrEqual(now),
@@ -201,15 +222,19 @@ export class CronJobsService {
                 reminder_sent: false,
                 active: true,
               },
-              select: ['id', 'scheduled_at', 'reminder_sent'],
+              select: ['id', 'scheduled_at', 'reminder_sent', 'lead_name'],
             });
             if (allScheduled.length > 0) {
-              this.logger.log(`Tenant ${tenantKey}: ${allScheduled.length} scheduled conversation(s) found, but none are due yet:`);
+              this.logger.log(`Tenant ${tenantKey}: ${allScheduled.length} scheduled conversation(s) found, checking if any are due:`);
               allScheduled.forEach(c => {
                 const scheduledTime = c.scheduled_at ? new Date(c.scheduled_at).toISOString() : 'null';
-                const isDue = c.scheduled_at && new Date(c.scheduled_at) <= now;
-                this.logger.log(`  - Conversation ${c.id}: scheduled_at=${scheduledTime}, now=${now.toISOString()}, isDue=${isDue}`);
+                const scheduledDate = c.scheduled_at ? new Date(c.scheduled_at) : null;
+                const isDue = scheduledDate && scheduledDate <= now;
+                const timeDiff = scheduledDate ? Math.round((now.getTime() - scheduledDate.getTime()) / 1000 / 60) : null; // minutes
+                this.logger.log(`  - Conversation ${c.id} (${c.lead_name || 'N/A'}): scheduled_at=${scheduledTime}, now=${now.toISOString()}, isDue=${isDue}, timeDiff=${timeDiff !== null ? `${timeDiff} minutes` : 'N/A'}`);
               });
+            } else {
+              this.logger.log(`Tenant ${tenantKey}: No scheduled conversations found`);
             }
             continue;
           }
