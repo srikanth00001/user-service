@@ -19,8 +19,8 @@ export class CreateMessageDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['text', 'image', 'video', 'document', 'audio'])
-  type?: 'text' | 'image' | 'video' | 'document' | 'audio';
+  @IsIn(['text', 'image', 'video', 'document', 'audio', 'sticker'])
+  type?: 'text' | 'image' | 'video' | 'document' | 'audio' | 'sticker';
 
   @IsOptional()
   @IsBoolean()

@@ -103,6 +103,8 @@ export class MessageService {
         type: dto.type || 'text',
         parent_message_id: dto.parent_message_id,
         view_once: dto.view_once ?? false,
+        media_url: dto.media_url,
+        filename: dto.filename,
         whatsapp_message_id: whatsappMessageId ?? undefined,
       });
 
