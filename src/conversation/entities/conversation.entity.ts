@@ -2,7 +2,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, DeleteDateColumn, Index } from 'typeorm';
 
 @Entity('conversations')
-@Index(['lead_id', 'source'], { unique: true })
+@Index(['lead_id', 'source'])
 export class Conversation {
   @PrimaryGeneratedColumn()
   id: number;

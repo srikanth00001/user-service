@@ -44,11 +44,11 @@ import { PhoneTenantMap } from './lead_management/leads/entities/phone-tenant-ma
     TypeOrmModule.forRoot({
       name: 'default',
       type: 'postgres',
-      host: process.env.DB_HOST,
-      port: parseInt(process.env.DB_PORT!),
-      username: process.env.DB_USERNAME,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
+      host: 'localhost',
+      port: 5432,
+      username: 'postgres',
+      password: 'Srikanth@03',
+      database: 'lead-crm',
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       entities: [
         User,Role, Menu,Permission, Subscription,Plan,PhoneTenantMap
