@@ -24,11 +24,15 @@ import { CreateConversationDto } from '../../conversation/dto/create-conversatio
 import * as XLSX from 'xlsx';
 import { DatabaseManager } from '../../common/database/database.manager';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { LeadCreatedEvent } from './events/lead-created.event';
+
 @Injectable()
 export class LeadsService {
   constructor(
     private dbManager: DatabaseManager,
     private messageService: MessageService,
+    private eventEmitter: EventEmitter2,
     @Inject(forwardRef(() => ConversationService))
     private conversationService: ConversationService,
   ) { }
@@ -43,10 +47,10 @@ export class LeadsService {
   }
 
   async create(dto: any, userId: string, email: string) {
-    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+    const { dataSource, tenantKey } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const repo = dataSource.getRepository(Lead);
 
-    return repo.save(
+    const savedLead = await repo.save(
       repo.create({
         ...dto,
         source: dto.source || 'manual',
@@ -54,6 +58,13 @@ export class LeadsService {
         assignedTo: null,
       }),
     );
+
+    this.eventEmitter.emit(
+      'lead.created',
+      new LeadCreatedEvent(tenantKey, savedLead as unknown as Lead, 'manual'),
+    );
+
+    return savedLead;
   }
 
   async findAll(userId: string, email: string, role?: string) {

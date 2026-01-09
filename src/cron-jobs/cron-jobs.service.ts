@@ -12,6 +12,9 @@ import { User } from 'src/user/entities/user.entity';
 import { EmailService } from 'src/common/email/email.service';
 import { DatabaseManager, TenantConnection } from 'src/common/database/database.manager';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ReminderDueEvent } from '../conversation/events/reminder-due.event';
+
 @Injectable()
 export class CronJobsService {
   private readonly logger = new Logger(CronJobsService.name);
@@ -21,6 +24,7 @@ export class CronJobsService {
     private subscriptionRepository: Repository<Subscription>,
     private emailService: EmailService,
     private dbManager: DatabaseManager,
+    private eventEmitter: EventEmitter2,
   ) {
     // Log that cron jobs are initialized
     this.logger.log('✅ CronJobsService initialized - Conversation reminder cron will run every 5 minutes');
@@ -30,65 +34,65 @@ export class CronJobsService {
 
 
   async handleSubscriptionQueue() {
-  this.logger.log('Running subscription queue check...');
+    this.logger.log('Running subscription queue check...');
 
-  const now = new Date();
+    const now = new Date();
 
-  // Find users whose ACTIVE subscription has expired
-  const expiredActiveSubs = await this.subscriptionRepository.find({
-    where: {
-      status: SubscriptionStatus.ACTIVE,
-      expiry_date: LessThanOrEqual(now),
-    },
-    relations: ['user'],
-  });
-
-  for (const expiredSub of expiredActiveSubs) {
-    const userId = expiredSub.user.id;
-
-    // Mark current as EXPIRED
-    await this.subscriptionRepository.update(expiredSub.id, {
-      status: SubscriptionStatus.EXPIRED,
-      active: false,
-    });
-
-    this.logger.log(`Expired subscription ${expiredSub.id} for user ${userId}`);
-
-    // Find the next UPCOMING subscription (earliest start_date)
-    const nextSub = await this.subscriptionRepository.findOne({
+    // Find users whose ACTIVE subscription has expired
+    const expiredActiveSubs = await this.subscriptionRepository.find({
       where: {
-        user: { id: userId },
-        status: SubscriptionStatus.UPCOMING,
+        status: SubscriptionStatus.ACTIVE,
+        expiry_date: LessThanOrEqual(now),
       },
-      order: { start_date: 'ASC' },
+      relations: ['user'],
     });
 
-    if (nextSub) {
-      // Activate it!
-      await this.subscriptionRepository.update(nextSub.id, {
-        status: SubscriptionStatus.ACTIVE,
-        active: true,
-        start_date: now, // or keep original? usually reset to now
+    for (const expiredSub of expiredActiveSubs) {
+      const userId = expiredSub.user.id;
+
+      // Mark current as EXPIRED
+      await this.subscriptionRepository.update(expiredSub.id, {
+        status: SubscriptionStatus.EXPIRED,
+        active: false,
       });
 
-      this.logger.log(`Activated upcoming subscription ${nextSub.id}`);
+      this.logger.log(`Expired subscription ${expiredSub.id} for user ${userId}`);
 
-      await this.sendWebhook('SUBSCRIPTION_ACTIVATED', {
-        subscription_id: nextSub.id,
-        user_id: userId,
-        plan_name: nextSub.plan.name,
+      // Find the next UPCOMING subscription (earliest start_date)
+      const nextSub = await this.subscriptionRepository.findOne({
+        where: {
+          user: { id: userId },
+          status: SubscriptionStatus.UPCOMING,
+        },
+        order: { start_date: 'ASC' },
       });
 
-      await this.sendWebhook('SUBSCRIPTION_EXPIRED', {
-        previous_subscription_id: expiredSub.id,
-      });
-    } else {
-      await this.sendWebhook('SUBSCRIPTION_EXPIRED_NO_QUEUE', {
-        user_id: userId,
-      });
+      if (nextSub) {
+        // Activate it!
+        await this.subscriptionRepository.update(nextSub.id, {
+          status: SubscriptionStatus.ACTIVE,
+          active: true,
+          start_date: now, // or keep original? usually reset to now
+        });
+
+        this.logger.log(`Activated upcoming subscription ${nextSub.id}`);
+
+        await this.sendWebhook('SUBSCRIPTION_ACTIVATED', {
+          subscription_id: nextSub.id,
+          user_id: userId,
+          plan_name: nextSub.plan.name,
+        });
+
+        await this.sendWebhook('SUBSCRIPTION_EXPIRED', {
+          previous_subscription_id: expiredSub.id,
+        });
+      } else {
+        await this.sendWebhook('SUBSCRIPTION_EXPIRED_NO_QUEUE', {
+          user_id: userId,
+        });
+      }
     }
   }
-}
   async deactivateExpiredSubscriptions() {
     try {
       console.log('Checking for expired subscriptions...');
@@ -124,22 +128,22 @@ export class CronJobsService {
   }
 
   async sendWebhook(eventType: string, payload: any) {
-  try {
-    const webhookUrl = process.env.WEBHOOK_URL;
+    try {
+      const webhookUrl = process.env.WEBHOOK_URL;
 
-    if (!webhookUrl) {
-      throw new Error('WEBHOOK_URL is not defined in environment variables.');
+      if (!webhookUrl) {
+        throw new Error('WEBHOOK_URL is not defined in environment variables.');
+      }
+
+      console.log(`Sending ${eventType} webhook to ${webhookUrl}`);
+      console.log('Webhook Payload:', JSON.stringify(payload, null, 2));
+
+      const response = await axios.post(webhookUrl, { event: eventType, data: payload });
+      console.log(`Webhook sent successfully. Status: ${response.status}`);
+    } catch (error) {
+      console.error(`Webhook failed for ${eventType}:`, error.message);
     }
-
-    console.log(`Sending ${eventType} webhook to ${webhookUrl}`);
-    console.log('Webhook Payload:', JSON.stringify(payload, null, 2));
-
-    const response = await axios.post(webhookUrl, { event: eventType, data: payload });
-    console.log(`Webhook sent successfully. Status: ${response.status}`);
-  } catch (error) {
-    console.error(`Webhook failed for ${eventType}:`, error.message);
   }
-}
 
   // ─────────────────────────────────────────────────────────────────
   // CONVERSATION REMINDER CRON JOB
@@ -147,31 +151,31 @@ export class CronJobsService {
   @Cron('*/5 * * * *') // Run every 5 minutes
   async checkConversationReminders() {
     this.logger.log('⏰ [CRON] Checking for due conversation reminders...');
-    
+
     try {
       const now = new Date();
       this.logger.log(`Current time (UTC): ${now.toISOString()}`);
-      
+
       // Get all unique tenant keys from master database
       const masterDs = this.dbManager.getMasterDataSource();
       const userRepo = masterDs.getRepository(User);
-      
+
       // Get all unique tenant keys from users
       const allTenantKeys = await userRepo
         .createQueryBuilder('user')
         .select('DISTINCT user.tenantKey', 'tenantKey')
         .where('user.tenantKey IS NOT NULL')
         .getRawMany();
-      
+
       const tenantKeys = allTenantKeys.map(row => row.tenantKey).filter(Boolean);
-      
+
       if (tenantKeys.length === 0) {
         this.logger.warn('⚠️ No tenant keys found in master database.');
         return;
       }
-      
+
       this.logger.log(`Found ${tenantKeys.length} tenant(s) to check: ${tenantKeys.join(', ')}`);
-      
+
       // Check each tenant database
       for (const tenantKey of tenantKeys) {
         try {
@@ -180,11 +184,11 @@ export class CronJobsService {
           this.logger.log(`Checking tenant: ${tenantKey}`);
           const convRepo = dataSource.getRepository(Conversation);
           const leadRepo = dataSource.getRepository(Lead);
-          
+
           // Find conversations with scheduled_at <= now and reminder_sent = false
           // Using UTC time for comparison since scheduled_at is stored as timestamptz (UTC)
           this.logger.log(`Tenant ${tenantKey}: Querying for due conversations (scheduled_at <= ${now.toISOString()})...`);
-          
+
           // Also try a raw query to see what's in the database
           const rawScheduled = await convRepo
             .createQueryBuilder('conv')
@@ -193,7 +197,7 @@ export class CronJobsService {
             .andWhere('conv.active = true')
             .select(['conv.id', 'conv.scheduled_at', 'conv.reminder_sent', 'conv.lead_name'])
             .getMany();
-          
+
           if (rawScheduled.length > 0) {
             this.logger.log(`Tenant ${tenantKey}: Raw query found ${rawScheduled.length} scheduled conversation(s):`);
             rawScheduled.forEach(c => {
@@ -203,7 +207,7 @@ export class CronJobsService {
               this.logger.log(`  - Conversation ${c.id}: scheduled_at=${scheduledTime}, isDue=${isDue}`);
             });
           }
-          
+
           const dueConversations = await convRepo.find({
             where: {
               scheduled_at: LessThanOrEqual(now),
@@ -211,9 +215,9 @@ export class CronJobsService {
               active: true,
             },
           });
-          
+
           this.logger.log(`Tenant ${tenantKey}: Found ${dueConversations.length} conversation(s) with scheduled reminders`);
-          
+
           if (dueConversations.length === 0) {
             // Log all scheduled conversations for debugging
             const allScheduled = await convRepo.find({
@@ -238,9 +242,9 @@ export class CronJobsService {
             }
             continue;
           }
-          
+
           this.logger.log(`✅ Found ${dueConversations.length} due reminder(s) in tenant: ${tenantKey}`);
-          
+
           for (const conv of dueConversations) {
             try {
               // Get lead details
@@ -249,11 +253,11 @@ export class CronJobsService {
                 this.logger.warn(`Lead not found for conversation ${conv.id}`);
                 continue;
               }
-              
+
               // Determine recipient
               let recipientEmail: string | null = null;
               let recipientName: string = 'User';
-              
+
               // Priority: 1. Assigned agent, 2. Business owner (main DB)
               if (conv.assigned_agent_id) {
                 // Get agent from tenant DB
@@ -264,7 +268,7 @@ export class CronJobsService {
                   recipientName = `${agent.firstName} ${agent.lastName || ''}`.trim();
                 }
               }
-              
+
               // If no agent or agent not found, get business owner from main DB
               if (!recipientEmail) {
                 // Use query builder to properly join and filter by role name
@@ -279,34 +283,37 @@ export class CronJobsService {
                   recipientName = `${businessOwner.firstName} ${businessOwner.lastName || ''}`.trim();
                 }
               }
-              
+
               if (!recipientEmail) {
                 this.logger.warn(`No recipient found for conversation ${conv.id}`);
                 continue;
               }
-              
-              // Send reminder email
-              this.logger.log(`Sending reminder email for conversation ${conv.id} to ${recipientEmail}...`);
-              const emailSent = await this.emailService.sendReminderEmail(
-                recipientEmail,
-                recipientName,
-                {
-                  leadName: lead.name || conv.lead_name || 'Unknown',
-                  phone: lead.phone || conv.phone_number || 'N/A',
-                  email: lead.email || undefined,
-                  scheduledAt: conv.scheduled_at!,
-                  conversationId: conv.id,
+
+              // Emit EDA Event instead of sending email directly
+              this.eventEmitter.emit(
+                'conversation.reminder_due',
+                new ReminderDueEvent(
                   tenantKey,
-                },
+                  recipientEmail,
+                  recipientName,
+                  lead.name || conv.lead_name || 'Unknown',
+                  lead.phone || conv.phone_number || 'N/A',
+                  conv.id,
+                  conv.scheduled_at!,
+                  lead.email || undefined,
+                ),
               );
-              
-              if (emailSent) {
-                // Mark reminder as sent
-                await convRepo.update(conv.id, { reminder_sent: true });
-                this.logger.log(`✅ Reminder sent successfully for conversation ${conv.id} to ${recipientEmail}`);
-              } else {
-                this.logger.error(`❌ Failed to send reminder email for conversation ${conv.id} to ${recipientEmail}`);
-              }
+              this.logger.log(`📢 [EDA] Emitted conversation.reminder_due for conv ${conv.id}`);
+
+              // NOTE: We update reminder_sent HERE to prevent loop, OR the listener updates it.
+              // In EDA, usually the producer should trust the consumer, but for Cron reliability,
+              // we might want to flag it as "processing" or wait.
+              // For now, let's assume the listener handles the DB update (as implemented in listener).
+              // BUT if we don't update here, the next cron tick (5 mins) might pick it up again if listener failed?
+              // Implementation Plan says Listener handles it. That's fine.
+              // If we want to be safe, we could mark 'processing' here?
+              // The query checks 'reminder_sent = false'.
+              // Let's rely on the listener to update it.
             } catch (error) {
               this.logger.error(`❌ Error processing reminder for conversation ${conv.id}:`, error);
               this.logger.error(`Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UserModule } from './user/user.module';
@@ -37,6 +38,7 @@ import { PhoneTenantMap } from './lead_management/leads/entities/phone-tenant-ma
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    EventEmitterModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -51,7 +53,7 @@ import { PhoneTenantMap } from './lead_management/leads/entities/phone-tenant-ma
       database: 'lead-crm',
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       entities: [
-        User,Role, Menu,Permission, Subscription,Plan,PhoneTenantMap
+        User, Role, Menu, Permission, Subscription, Plan, PhoneTenantMap
       ],
       synchronize: true,
       logging: true,
@@ -65,7 +67,7 @@ import { PhoneTenantMap } from './lead_management/leads/entities/phone-tenant-ma
     CronJobsModule,
     LeadsModule,
     CampaignsModule,
-    FacebookModule,GoogleAdsModule,
+    FacebookModule, GoogleAdsModule,
     SharedJwtModule,
     BusinessUserModule,
     BusinessRoleModule,
@@ -81,4 +83,4 @@ import { PhoneTenantMap } from './lead_management/leads/entities/phone-tenant-ma
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

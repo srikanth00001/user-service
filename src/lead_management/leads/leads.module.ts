@@ -13,6 +13,8 @@ import { JwtStrategy } from 'src/auth/jwt.strategy';
 import { ConversationModule } from 'src/conversation/conversation.module';
 import { MessageModule } from 'src/message/message.module';
 
+import { LeadsListener } from './leads.listener';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([Lead, Note, Temp, ExcelLead]),
@@ -24,7 +26,7 @@ import { MessageModule } from 'src/message/message.module';
     forwardRef(() => MessageModule),
   ],
   controllers: [LeadsController],
-  providers: [LeadsService, DatabaseManager, TenantService, JwtStrategy],
+  providers: [LeadsService, DatabaseManager, TenantService, JwtStrategy, LeadsListener],
   exports: [LeadsService],
 })
-export class LeadsModule {}
+export class LeadsModule { }

@@ -14,6 +14,9 @@ import { BusinessRole } from 'src/business-role/entities/business-role.entity';
 import { BusinessPermission } from 'src/business-permission/entities/business-permission.entity';
 import { DatabaseManager } from 'src/common/database/database.manager';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { UserRegisteredEvent } from './events/user-registered.event';
+
 @Injectable()
 export class UserService {
   constructor(
@@ -22,6 +25,7 @@ export class UserService {
     @InjectRepository(Role)
     private roleRepository: Repository<Role>,
     private readonly dbManager: DatabaseManager,
+    private eventEmitter: EventEmitter2,
   ) { }
 
   // 🔹 Create new user in main (lead-crm) DB
@@ -53,7 +57,20 @@ export class UserService {
       parent: userData.parentId ? await this.getUser(userData.parentId) : undefined,
     });
 
-    return this.userRepository.save(user);
+    const savedUser = await this.userRepository.save(user);
+
+    // EDA: Emit User Registered
+    if (savedUser) {
+      // Check if this new user implies a tenant (e.g., Business Owner)
+      // Usually tenantKey comes from frontend or is derived.
+      // For createUser (Admin Panel usually), tenantKey might not be in userData.
+      // But if it is passed, pass it.
+      const tenantKeyCandidate = userData.tenantKey || (email.includes('@') ? email.split('@')[1].split('.')[0] : undefined);
+      // Simple heuristic or null. Listener checks existence.
+      this.eventEmitter.emit('user.registered', new UserRegisteredEvent(savedUser, userData.tenantKey));
+    }
+
+    return savedUser;
   }
 
   // 🔹 Fetch all users
@@ -185,7 +202,12 @@ export class UserService {
       parent: user.parentId ? await this.getUser(user.parentId) : undefined,
     });
 
-    return this.userRepository.save(userEntity);
+    const savedUser = await this.userRepository.save(userEntity);
+
+    // EDA: Emit User Registered
+    this.eventEmitter.emit('user.registered', new UserRegisteredEvent(savedUser, tenantKey));
+
+    return savedUser;
   }
 
   // ✅ FIXED: Proper handler for microservice message

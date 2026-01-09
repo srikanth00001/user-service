@@ -9,6 +9,8 @@ import { JwtStrategy } from '../auth/jwt.strategy';
 import { Role } from '../role/entities/role.entity';
 import { DatabaseManager } from 'src/common/database/database.manager';
 
+import { UserListener } from './user.listener';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Role]),
@@ -23,7 +25,7 @@ import { DatabaseManager } from 'src/common/database/database.manager';
     }),
   ],
   controllers: [UserController],
-  providers: [UserService, JwtStrategy,DatabaseManager],
+  providers: [UserService, JwtStrategy, DatabaseManager, UserListener],
   exports: [UserService],
 })
-export class UserModule {}
+export class UserModule { }
