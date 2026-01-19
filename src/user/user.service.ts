@@ -210,7 +210,6 @@ export class UserService {
     return savedUser;
   }
 
-  // ✅ FIXED: Proper handler for microservice message
   @MessagePattern({ cmd: 'findBusinessUserByEmail' })
   async findBusinessUserByEmailHandler(email: string) {
     return this.findBusinessUserByEmail(email);
@@ -239,7 +238,7 @@ export class UserService {
     }
   }
 
-  // 🔹 Find business user by ID inside tenant DB  
+  // Find business user by ID inside tenant DB  
   async findBusinessUserById(id: string, tenantKey?: string): Promise<BusinessUser | null> {
     // If tenantKey is provided, look in that specific DB
     if (tenantKey) {
@@ -303,7 +302,7 @@ export class UserService {
     return { success: true, tenantKey };
   }
 
-  // 🔹 Find role helpers
+  // Find role helpers
   async findRoleById(id: string) {
     const role = await this.roleRepository.findOne({ where: { id } });
     if (!role) throw new BadRequestException(`Role with ID ${id} not found`);
