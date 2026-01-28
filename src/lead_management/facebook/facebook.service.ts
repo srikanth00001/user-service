@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import FormData = require('form-data');
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { DatabaseManager } from '../../common/database/database.manager';
@@ -519,4 +520,227 @@ export class FacebookService {
     };
   }
 
+  async getWhatsAppTemplates(tenantKey: string, phoneNumberId: string) {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+
+    const connection = await repo.findOne({ where: { phoneNumberId, active: true } });
+    if (!connection) {
+      throw new Error('WhatsApp connection not found');
+    }
+
+    const { wabaId, accessToken } = connection;
+
+    try {
+      const res = await firstValueFrom(
+        this.httpService.get(`https://graph.facebook.com/v20.0/${wabaId}/message_templates`, {
+          params: { access_token: accessToken, limit: 100 },
+        }),
+      );
+
+      return {
+        success: true,
+        data: res.data.data, // Array of templates
+      };
+    } catch (error: any) {
+      console.error('❌ Failed to fetch WhatsApp templates:', error.response?.data || error.message);
+      throw new Error(`Failed to fetch templates: ${error.response?.data?.error?.message || error.message}`);
+    }
+  }
+
+  async createWhatsAppTemplate(tenantKey: string, phoneNumberId: string, templateData: any) {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+
+    const connection = await repo.findOne({ where: { phoneNumberId, active: true } });
+    if (!connection) {
+      throw new Error('WhatsApp connection not found');
+    }
+
+    const { wabaId, accessToken } = connection;
+
+    try {
+      const res = await firstValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v20.0/${wabaId}/message_templates`,
+          {
+            name: templateData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+            category: templateData.category?.toUpperCase() || 'MARKETING',
+            language: templateData.language || 'en_US',
+            components: templateData.components,
+          },
+          { params: { access_token: accessToken } },
+        ),
+      );
+
+      return {
+        success: true,
+        data: res.data,
+      };
+    } catch (error: any) {
+      console.error('❌ Failed to create WhatsApp template:', error.response?.data || error.message);
+      throw new Error(`Failed to create template: ${error.response?.data?.error?.message || error.message}`);
+    }
+  }
+
+  async uploadTemplateMedia(tenantKey: string, phoneNumberId: string, file: Express.Multer.File) {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+
+    const connection = await repo.findOne({ where: { phoneNumberId, active: true } });
+    if (!connection) throw new Error('WhatsApp connection not found');
+
+    const { accessToken } = connection;
+
+    try {
+      // 1. Initial request for upload session
+      const initRes = await firstValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v20.0/app/uploads`,
+          null,
+          {
+            params: {
+              access_token: accessToken,
+              file_length: file.size,
+              file_type: file.mimetype,
+            },
+          },
+        ),
+      );
+
+      const uploadId = initRes.data.id;
+
+      // 2. Upload file data
+      const uploadRes = await firstValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v20.0/${uploadId}`,
+          file.buffer,
+          {
+            headers: {
+              'Authorization': `OAuth ${accessToken}`,
+              'file_offset': '0',
+              'Content-Type': 'application/octet-stream',
+            },
+          },
+        ),
+      );
+
+      return {
+        success: true,
+        handle: uploadRes.data.h,
+      };
+    } catch (error: any) {
+      console.error('❌ Failed to upload template media to Meta:', error.response?.data || error.message);
+      throw new Error(`Upload failed: ${error.response?.data?.error?.message || error.message}`);
+    }
+  }
+  async createWhatsAppFlow(tenantKey: string, phoneNumberId: string, flowData: any) {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+
+    const connection = await repo.findOne({ where: { phoneNumberId, active: true } });
+    if (!connection) throw new Error('WhatsApp connection not found');
+
+    const { wabaId, accessToken } = connection;
+
+    try {
+      // 1. Create Flow Shell
+      console.log('🚀 Creating Flow Shell on Meta...');
+      // Ensure name uniqueness by adding a short random suffix
+      const uniqueName = `${flowData.name.substring(0, 25)}_${Math.random().toString(36).substring(7)}`;
+
+      const flowRes = await firstValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v20.0/${wabaId}/flows`,
+          {
+            name: uniqueName,
+            categories: flowData.categories || ['OTHER'],
+          },
+          { params: { access_token: accessToken } },
+        ),
+      );
+
+      const flowId = flowRes.data.id;
+      console.log('✅ Flow Shell created with ID:', flowId);
+
+      // 2. Prepare Flow JSON (v2.1 - The most stable production baseline)
+      const metaFlowJson = {
+        version: '2.1',
+        screens: flowData.screens.map((s: any, idx: number) => {
+          const isLast = idx === flowData.screens.length - 1;
+          return {
+            id: s.id || `SCREEN_${idx}`,
+            title: s.title || 'Welcome',
+            terminal: isLast,
+            layout: {
+              children: [
+                ...(s.components || []).map((c: any, cIdx: number) => {
+                  const uniqueCompName = `c_${idx}_${cIdx}`;
+                  if (c.type === 'text') return { type: 'TextBody', text: c.label };
+                  if (c.type === 'text-input') return { type: 'TextInput', label: c.label, name: uniqueCompName, required: c.required || false };
+                  if (c.type === 'dropdown' || c.type === 'radio') {
+                    const CompType = c.type === 'dropdown' ? 'DropDown' : 'RadioButtons';
+                    return {
+                      type: CompType,
+                      label: c.label,
+                      name: uniqueCompName,
+                      options: (c.options || []).map((o: any) => ({ id: o.value || o.id, title: o.label || o.title }))
+                    };
+                  }
+                  return null;
+                }).filter(Boolean),
+                {
+                  type: 'Footer',
+                  label: isLast ? 'Finish' : 'Continue',
+                  'on-click-action': {
+                    name: isLast ? 'complete' : 'navigate',
+                    payload: isLast ? {} : { screen: flowData.screens[idx + 1]?.id || `SCREEN_${idx + 1}` }
+                  }
+                }
+              ]
+            }
+          };
+        })
+      };
+
+      console.log('🚀 Sending Baseline Flow JSON (v2.1)...');
+
+      // 3. Upload Flow JSON Asset (Multipart Strategy)
+      const fileBuffer = Buffer.from(JSON.stringify(metaFlowJson));
+      const form = new FormData();
+      form.append('name', 'flow.json');
+      form.append('asset_type', 'FLOW_JSON');
+      form.append('file', fileBuffer, { filename: 'flow.json', contentType: 'application/json' });
+
+      await firstValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v20.0/${flowId}/assets`,
+          form,
+          { params: { access_token: accessToken }, headers: { ...form.getHeaders() } },
+        ),
+      );
+
+      console.log('✅ Flow Asset uploaded. Waiting 2s for Meta to process...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 4. Publish the Flow
+      console.log('🚀 Publishing Flow on Meta...');
+      await firstValueFrom(
+        this.httpService.post(
+          `https://graph.facebook.com/v20.0/${flowId}/publish`,
+          {},
+          { params: { access_token: accessToken } }
+        )
+      );
+      console.log('✅ Flow published successfully');
+
+      return { success: true, flowId };
+    } catch (error: any) {
+      console.error('❌ Meta API Error Detail:', error.response?.data?.error || error.message);
+      const metaMsg = error.response?.data?.error?.message || error.message;
+      const subcode = error.response?.data?.error?.error_subcode;
+
+      throw new Error(`Flow API Error [${subcode || 'N/A'}]: ${metaMsg}`);
+    }
+  }
 }

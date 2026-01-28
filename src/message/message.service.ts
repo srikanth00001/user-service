@@ -106,6 +106,8 @@ export class MessageService {
         media_url: dto.media_url,
         filename: dto.filename,
         whatsapp_message_id: whatsappMessageId ?? undefined,
+        templateName: dto.templateName,
+        templateLanguage: dto.templateLanguage,
       });
 
       const saved = await msgRepo.save(msgEntity);
@@ -135,9 +137,8 @@ export class MessageService {
       }
 
       // 7. SEND TO WHATSAPP (only outgoing agent messages)
-      if (senderUserId && dto.type === 'text' && dto.content?.trim()) {
+      if (senderUserId && (dto.type === 'text' || dto.type === 'template')) {
         let sentWhatsappId: string | undefined;
-
 
         try {
           const metaRepo = dataSource.getRepository(MetaConnection);
@@ -154,15 +155,70 @@ export class MessageService {
             accessToken: overrideConn.accessToken
           };
 
-          if (parentWhatsAppMessageId) {
+          if (dto.type === 'template' && dto.templateName) {
+            this.logger.log(`Sending TEMPLATE to WhatsApp: ${dto.templateName}`);
+
+            // Format parameters for Meta Graph API
+            const components: any[] = [];
+
+            // 1. Body Parameters
+            if (dto.templateParams && dto.templateParams.length > 0) {
+              components.push({
+                type: 'body',
+                parameters: dto.templateParams.map(val => ({
+                  type: 'text',
+                  text: val
+                }))
+              });
+            }
+
+            // 2. Button Parameters (e.g. dynamic URLs)
+            if (dto.templateButtonParams && dto.templateButtonParams.length > 0) {
+              dto.templateButtonParams.forEach(btn => {
+                components.push({
+                  type: 'button',
+                  sub_type: 'url',
+                  index: String(btn.index), // Meta expects string index
+                  parameters: [{
+                    type: 'text',
+                    text: btn.value || ' '
+                  }]
+                });
+              });
+            }
+
+            // 3. Header Parameters
+            // If the user didn't specify, we use body params as a fallback if the DTO is extended, 
+            // but for now let's rely on the explicit fields if we add them. 
+            // Better yet, let's check if there are any specific header params.
+            if ((dto as any).templateHeaderParams && (dto as any).templateHeaderParams.length > 0) {
+              components.push({
+                type: 'header',
+                parameters: (dto as any).templateHeaderParams.map(val => ({
+                  type: 'text',
+                  text: val || ' '
+                }))
+              });
+            }
+
+            this.logger.log(`Constructed Components: ${JSON.stringify(components)}`);
+
+            sentWhatsappId = await this.whatsAppService.sendTemplateMessage(
+              conv.phone_number,
+              dto.templateName,
+              dto.templateLanguage || 'en_US',
+              opts,
+              components,
+            );
+          } else if (parentWhatsAppMessageId) {
             this.logger.log(`Sending REPLY to WhatsApp message ID: ${parentWhatsAppMessageId}`);
             sentWhatsappId = await this.whatsAppService.sendReplyMessage(
               conv.phone_number,
-              dto.content.trim(),
+              dto.content?.trim() || '',
               parentWhatsAppMessageId,
               opts
             );
-          } else {
+          } else if (dto.content?.trim()) {
             sentWhatsappId = await this.whatsAppService.sendTextMessage(
               conv.phone_number,
               dto.content.trim(),

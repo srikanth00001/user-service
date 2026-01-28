@@ -10,7 +10,10 @@ import {
   Delete,
   Param,
   BadRequestException,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { FacebookService } from './facebook.service';
@@ -272,4 +275,48 @@ export class FacebookController {
 
     return { success: true, data: config };
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('whatsapp-templates/:phoneNumberId')
+  async getWhatsAppTemplates(
+    @Req() req: any,
+    @Param('phoneNumberId') phoneNumberId: string,
+  ) {
+    const tenantKey = req.user.tenantKey;
+    return this.facebookService.getWhatsAppTemplates(tenantKey, phoneNumberId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('whatsapp-templates/:phoneNumberId')
+  async createWhatsAppTemplate(
+    @Req() req: any,
+    @Param('phoneNumberId') phoneNumberId: string,
+    @Body() body: any,
+  ) {
+    const tenantKey = req.user.tenantKey;
+    return this.facebookService.createWhatsAppTemplate(tenantKey, phoneNumberId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('whatsapp-templates/:phoneNumberId/upload')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadTemplateMedia(
+    @Req() req: any,
+    @Param('phoneNumberId') phoneNumberId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const tenantKey = req.user.tenantKey;
+    return this.facebookService.uploadTemplateMedia(tenantKey, phoneNumberId, file);
+  }
+  @UseGuards(JwtAuthGuard)
+  @Post('whatsapp-flows/:phoneNumberId')
+  async createWhatsAppFlow(
+    @Req() req: any,
+    @Param('phoneNumberId') phoneNumberId: string,
+    @Body() body: any,
+  ) {
+    const tenantKey = req.user.tenantKey;
+    return this.facebookService.createWhatsAppFlow(tenantKey, phoneNumberId, body);
+  }
 }
+

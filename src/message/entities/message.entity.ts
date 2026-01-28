@@ -68,6 +68,12 @@ export class Message {
   media_url?: string;
 
   @Column({ nullable: true })
+  templateName?: string;
+
+  @Column({ nullable: true })
+  templateLanguage?: string;
+
+  @Column({ nullable: true })
   createdBy?: string;
 
   @ManyToOne(() => BusinessUser, { nullable: true })

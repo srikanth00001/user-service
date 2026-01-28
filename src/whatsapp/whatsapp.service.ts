@@ -217,7 +217,13 @@ export class WhatsAppService {
   private formatPhoneNumber(phone: string): string {
     const digits = phone.replace(/\D/g, '');
     if (!digits) throw new HttpException('Invalid phone number', HttpStatus.BAD_REQUEST);
-    return digits.startsWith('91') ? `+${digits}` : `+91${digits}`;
+
+    // RESTORED: Always ensure the + prefix for routing stability
+    if (digits.length > 10) {
+      return `+${digits}`;
+    }
+    // Default to Indian if exactly 10 digits
+    return `+91${digits}`;
   }
 
   private getMimeType(type: 'image' | 'video' | 'document' | 'audio'): string {
@@ -225,9 +231,35 @@ export class WhatsAppService {
       image: 'image/jpeg',
       video: 'video/mp4',
       document: 'application/pdf',
-      audio: 'audio/mpeg',   // ✔ fix here
+      audio: 'audio/mpeg',
     } as const;
     return map[type];
   }
 
+  async sendTemplateMessage(
+    to: string,
+    templateName: string,
+    languageCode: string,
+    opts: { phoneNumberId: string; accessToken: string },
+    components: any[] = [],
+  ): Promise<string> {
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: this.formatPhoneNumber(to),
+      type: 'template',
+      template: {
+        name: templateName,
+        language: {
+          code: languageCode,
+        },
+        ...(components.length > 0 ? { components } : {}),
+      },
+    };
+
+    this.logger.log('--- WHATSAPP PAYLOAD DEBUG ---');
+    this.logger.log(JSON.stringify(payload, null, 2));
+
+    return this.sendPayload(payload, opts);
+  }
 }

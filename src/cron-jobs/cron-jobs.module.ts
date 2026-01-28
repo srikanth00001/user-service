@@ -6,7 +6,7 @@ import { EmailService } from 'src/common/email/email.service';
 import { DatabaseManager } from 'src/common/database/database.manager';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Subscription])],
-  providers: [CronJobsService, EmailService, DatabaseManager],
+    imports: [TypeOrmModule.forFeature([Subscription])],
+    providers: [CronJobsService, EmailService, DatabaseManager],
 })
-export class CronJobsModule {}
+export class CronJobsModule { }
