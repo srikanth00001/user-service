@@ -26,6 +26,12 @@ import { FileInterceptor } from '@nestjs/platform-express';
 export class MessageController {
   constructor(private readonly messageService: MessageService) { }
 
+  @Get('template-responses')
+  async getTemplateResponses(@Request() req: any) {
+    const { userId, email, tenantKey } = this.getUser(req);
+    return this.messageService.getTemplateResponses(tenantKey, userId, email);
+  }
+
   @Post()
   async create(@Body() dto: CreateMessageDto, @Request() req: any) {
     console.log('=== MESSAGE CONTROLLER DEBUG ===');
@@ -137,6 +143,17 @@ export class MessageController {
     const viewOnce = body.view_once === 'true';
     if (!file) throw new HttpException('File missing', HttpStatus.BAD_REQUEST);
     return this.messageService.upload(tenantKey, body.messageId, file, userId, email, viewOnce);
+  }
+
+  @Post('upload-only')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadOnly(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: any,
+  ) {
+    const { userId, email, tenantKey } = this.getUser(req);
+    if (!file) throw new HttpException('File missing', HttpStatus.BAD_REQUEST);
+    return this.messageService.uploadMediaOnly(tenantKey, file, userId, email);
   }
 
   private getUser(req: any) {

@@ -94,6 +94,19 @@ export class WebhookController {
       this.logger.log('Webhook received:', JSON.stringify(body, null, 2));
 
       const entry = body.entry?.[0]?.changes?.[0]?.value;
+
+      // 1. HANDLE STATUS UPDATES (sent, delivered, read, failed)
+      if (entry?.statuses?.length) {
+        for (const status of entry.statuses) {
+          const { id, status: deliveryStatus, recipient_id, errors } = status;
+          this.logger.log(`📢 Meta Status Update [${id}]: ${deliveryStatus} to ${recipient_id}`);
+          if (errors) {
+            this.logger.error(`❌ Meta Status ERROR [${id}]:`, JSON.stringify(errors, null, 2));
+          }
+        }
+        return { success: true, message: 'Status processed' };
+      }
+
       if (!entry?.messages?.length) {
         return { success: true, message: 'No messages' };
       }
@@ -191,11 +204,66 @@ export class WebhookController {
         }
 
         // === INTERACTIVE MESSAGES ===
+        let metadata: any = undefined;
+
         if (message.interactive?.type === 'list_reply') {
           messageContent = message.interactive.list_reply?.title;
         }
-        if (message.interactive?.type === 'button_reply') {
+        else if (message.interactive?.type === 'button_reply') {
           messageContent = message.interactive.button_reply?.title;
+        }
+        else if (message.interactive?.type === 'nfm_reply') {
+          // This is a Flow Response
+          const flowReply = message.interactive.nfm_reply;
+          messageType = 'interactive';
+          try {
+            const rawResponse = flowReply.response_json;
+            const responseData = JSON.parse(rawResponse);
+
+            // Merge everything into a flat-ish object for filtering
+            // Some flows wrap everything in 'data', others mix it. We take both.
+            const mergedData = {
+              ...responseData,
+              ...(responseData.data && typeof responseData.data === 'object' && !Array.isArray(responseData.data) ? responseData.data : {})
+            };
+
+            metadata = {
+              flow_response: mergedData,
+              flow_name: flowReply.name,
+              flow_token: responseData.flow_token || (responseData.data && responseData.data.flow_token),
+              flow_raw: responseData // Keep full original for frontend deep-dive
+            };
+
+            // Create a nice human-readable summary for the chat bubble
+            const fieldLines = Object.entries(mergedData)
+              .filter(([key]) => !['flow_token', 'data'].includes(key)) // Filter out technical keys
+              .map(([key, val]) => {
+                const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                let displayVal = val;
+                if (Array.isArray(val)) {
+                  displayVal = val.join(', ');
+                } else if (typeof val === 'object' && val !== null) {
+                  // Some complex fields return { id, title }, we want the title or id
+                  displayVal = (val as any).title || (val as any).id || (val as any).label || JSON.stringify(val);
+                }
+                return `${label}: ${displayVal}`;
+              });
+
+            if (fieldLines.length > 0) {
+              messageContent = `📋 Flow: ${flowReply.name}\n${fieldLines.join('\n')}`;
+            } else if (flowReply.body) {
+              // Fallback to Meta's default body if no fields parsed
+              messageContent = `📋 Flow: ${flowReply.name}\nSummary: ${flowReply.body}`;
+            } else {
+              messageContent = `📋 Flow: ${flowReply.name}\nStatus: Completed Successfully`;
+            }
+
+            this.logger.log(`✅ Flow Response Processed [${flowReply.name}]: ${JSON.stringify(mergedData)}`);
+          } catch (e) {
+            this.logger.error(`❌ Failed to parse Flow response: ${e.message}`);
+            messageContent = `Flow Response (${flowReply.name}): ${flowReply.response_json}`;
+            metadata = { flow_response_raw: flowReply.response_json, flow_name: flowReply.name };
+          }
         }
 
         const senderName = entry.contacts?.[0]?.profile?.name || null;
@@ -213,6 +281,7 @@ export class WebhookController {
           businessPhoneNumberId: businessPhoneId,
           mediaUrl,
           filename,
+          metadata,
         });
       }
 

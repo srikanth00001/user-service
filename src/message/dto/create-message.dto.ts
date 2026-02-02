@@ -19,8 +19,11 @@ export class CreateMessageDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['text', 'image', 'video', 'document', 'audio', 'sticker', 'template'])
-  type?: 'text' | 'image' | 'video' | 'document' | 'audio' | 'sticker' | 'template';
+  @IsIn(['text', 'image', 'video', 'document', 'audio', 'sticker', 'template', 'interactive'])
+  type?: 'text' | 'image' | 'video' | 'document' | 'audio' | 'sticker' | 'template' | 'interactive';
+
+  @IsOptional()
+  metadata?: any;
 
   @IsOptional()
   @IsString()
@@ -75,4 +78,10 @@ export class CreateMessageDto {
 
   @IsOptional()
   templateButtonParams?: { index: number; value: string }[];
+
+  @IsOptional()
+  templateButtons?: { type: string; text: string; url?: string; phone_number?: string }[];
+
+  @IsOptional()
+  templateLocation?: { lat: string; lng: string; name?: string; address?: string };
 }

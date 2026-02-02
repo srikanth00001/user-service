@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import FormData = require('form-data');
+import * as crypto from 'crypto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { DatabaseManager } from '../../common/database/database.manager';
@@ -11,6 +12,7 @@ import { Repository } from 'typeorm';
 import { MetaConnection } from './entities/meta-connection.entity';
 import { TeamInboxService } from 'src/team-inbox/team-inbox.service';
 import { PhoneTenantMap } from '../leads/entities/phone-tenant-map.entity';
+import { Message } from 'src/message/entities/message.entity';
 
 @Injectable()
 export class FacebookService {
@@ -340,15 +342,25 @@ export class FacebookService {
 
   async handleWebhook(payload: any) {
     try {
+      console.log('[WHATSAPP WEBHOOK RAW]:', JSON.stringify(payload, null, 2));
+
       const entry = payload.entry?.[0];
       const changes = entry?.changes?.[0];
       const value = changes?.value;
 
       if (!value) return { status: 'ignored' };
 
-      // ─────────────────────────────────────────────────────────────────
-      // 1. HANDLE WHATSAPP MESSAGES
-      // ─────────────────────────────────────────────────────────────────
+      // 1. HANDLE STATUS UPDATES (sent, delivered, failed, read)
+      if (value.statuses && value.statuses.length > 0) {
+        for (const status of value.statuses) {
+          console.log(`📢 [STATUS] Message ${status.id} is now ${status.status} for ${status.recipient_id}`);
+          if (status.errors) {
+            console.error(`❌ [STATUS ERROR] for ${status.id}:`, JSON.stringify(status.errors, null, 2));
+          }
+        }
+      }
+
+      // 2. HANDLE INCOMING MESSAGES
       if (value.messages || value.statuses) {
         const metadata = value.metadata;
         const phoneNumberId = metadata?.phone_number_id;
@@ -377,15 +389,54 @@ export class FacebookService {
             const contact = value.contacts?.find((c: any) => c.wa_id === msg.from);
             const name = contact?.profile?.name || null;
 
+            // 🔍 Extract content for interactive messages
+            let content = msg.text?.body || msg.type;
+            let metadata: any = null;
+
+            if (msg.type === 'interactive') {
+              const interactive = msg.interactive;
+              if (interactive.type === 'button_reply') {
+                content = interactive.button_reply.title;
+                metadata = { button_id: interactive.button_reply.id };
+              } else if (interactive.type === 'list_reply') {
+                content = interactive.list_reply.title;
+                metadata = { list_item_id: interactive.list_reply.id, description: interactive.list_reply.description };
+              } else if (interactive.type === 'nfm_reply') {
+                // WhatsApp Flow Response
+                content = 'Flow Submitted';
+                try {
+                  metadata = { flow_response: JSON.parse(interactive.nfm_reply.response_json) };
+                } catch {
+                  metadata = { flow_response_raw: interactive.nfm_reply.response_json };
+                }
+              }
+            } else if (msg.type === 'button') {
+              content = msg.button.text;
+              metadata = { button_payload: msg.button.payload };
+            }
+
+            // 🔍 Find parent message ID locally if context is available
+            let parentMessageId: number | undefined = undefined;
+            if (msg.context?.id) {
+              const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+              const msgRepo = ds.getRepository(Message);
+              const parentMsg = await msgRepo.findOne({ where: { whatsapp_message_id: msg.context.id } });
+              if (parentMsg) {
+                parentMessageId = parentMsg.id;
+              }
+            }
+
             await this.teamInboxService.processIncomingMessage({
               tenantKey,
               phoneNumber: msg.from,
               name,
-              messageContent: msg.text?.body || msg.type, // Handle text or media type
+              messageContent: content,
               messageType: msg.type,
               whatsappMessageId: msg.id,
               businessPhoneNumberId: phoneNumberId,
               reaction: msg.reaction ? { messageId: msg.reaction.message_id, emoji: msg.reaction.emoji } : undefined,
+              parentMessageId,
+              metadata
             });
           }
         }
@@ -578,8 +629,18 @@ export class FacebookService {
         data: res.data,
       };
     } catch (error: any) {
-      console.error('❌ Failed to create WhatsApp template:', error.response?.data || error.message);
-      throw new Error(`Failed to create template: ${error.response?.data?.error?.message || error.message}`);
+      const metaError = error.response?.data?.error;
+      console.error('❌ Failed to create WhatsApp template:', metaError || error.message);
+
+      if (metaError?.error_subcode === 2388293) {
+        throw new Error('Template rejected: Too many variables ({{n}}) compared to the message length. Please add more text or reduce variables.');
+      }
+
+      if (metaError?.error_subcode === 2388299) {
+        throw new Error('Template rejected: Variables cannot be at the very start or end of the message. Please add some text before and after your variables.');
+      }
+
+      throw new Error(`Failed to create template: ${metaError?.message || error.message}`);
     }
   }
 
@@ -642,6 +703,7 @@ export class FacebookService {
     if (!connection) throw new Error('WhatsApp connection not found');
 
     const { wabaId, accessToken } = connection;
+    let flowId: string | null = null;
 
     try {
       // 1. Create Flow Shell
@@ -660,52 +722,176 @@ export class FacebookService {
         ),
       );
 
-      const flowId = flowRes.data.id;
+      flowId = flowRes.data.id;
       console.log('✅ Flow Shell created with ID:', flowId);
 
-      // 2. Prepare Flow JSON (v2.1 - The most stable production baseline)
+      // 2. Prepare Flow JSON (v6.0 - Meta Official Structure)
+      // Reference: https://developers.facebook.com/docs/whatsapp/flows/reference/flowjson
+
+      // Helper: Sanitize screen IDs to only contain letters and underscores (Meta requirement)
+      const sanitizeScreenId = (id: string): string => {
+        // Remove all numbers, keep only letters and underscores
+        return id.replace(/[0-9]/g, '').replace(/[^A-Za-z_]/g, '') || 'SCREEN_DEFAULT';
+      };
+
+      // First pass: collect all field names for payload aggregation
+      const allFields: { screenId: string; fieldName: string }[] = [];
+      flowData.screens.forEach((s: any, idx: number) => {
+        const safeId = sanitizeScreenId(s.id || `SCREEN_${String.fromCharCode(65 + idx)}`);
+        (s.components || []).forEach((c: any, cIdx: number) => {
+          if (['text-input', 'dropdown', 'radio', 'checkbox'].includes(c.type)) {
+            allFields.push({ screenId: safeId, fieldName: `field_${idx}_${cIdx}` });
+          }
+        });
+      });
+
       const metaFlowJson = {
-        version: '2.1',
+        version: '6.0',
         screens: flowData.screens.map((s: any, idx: number) => {
           const isLast = idx === flowData.screens.length - 1;
-          return {
-            id: s.id || `SCREEN_${idx}`,
-            title: s.title || 'Welcome',
-            terminal: isLast,
-            layout: {
-              children: [
-                ...(s.components || []).map((c: any, cIdx: number) => {
-                  const uniqueCompName = `c_${idx}_${cIdx}`;
-                  if (c.type === 'text') return { type: 'TextBody', text: c.label };
-                  if (c.type === 'text-input') return { type: 'TextInput', label: c.label, name: uniqueCompName, required: c.required || false };
-                  if (c.type === 'dropdown' || c.type === 'radio') {
-                    const CompType = c.type === 'dropdown' ? 'DropDown' : 'RadioButtons';
-                    return {
-                      type: CompType,
-                      label: c.label,
-                      name: uniqueCompName,
-                      options: (c.options || []).map((o: any) => ({ id: o.value || o.id, title: o.label || o.title }))
-                    };
-                  }
-                  return null;
-                }).filter(Boolean),
-                {
-                  type: 'Footer',
-                  label: isLast ? 'Finish' : 'Continue',
-                  'on-click-action': {
-                    name: isLast ? 'complete' : 'navigate',
-                    payload: isLast ? {} : { screen: flowData.screens[idx + 1]?.id || `SCREEN_${idx + 1}` }
-                  }
+          const isFirst = idx === 0;
+          const screenId = sanitizeScreenId(s.id || `SCREEN_${String.fromCharCode(65 + idx)}`);
+          const nextScreenId = sanitizeScreenId(flowData.screens[idx + 1]?.id || `SCREEN_${String.fromCharCode(65 + idx + 1)}`);
+
+          // Collect fields from PREVIOUS screens (to declare in data property)
+          const fieldsFromPreviousScreens = allFields.filter(f => {
+            const fieldScreenIdx = parseInt(f.fieldName.split('_')[1]);
+            return fieldScreenIdx < idx;
+          });
+
+          // Collect fields from THIS screen
+          const fieldsFromThisScreen = allFields.filter(f => {
+            const fieldScreenIdx = parseInt(f.fieldName.split('_')[1]);
+            return fieldScreenIdx === idx;
+          });
+
+          // Build the 'data' property - declares fields received from previous screens
+          const dataDeclaration: any = {};
+          fieldsFromPreviousScreens.forEach(f => {
+            dataDeclaration[f.fieldName] = {
+              type: 'string',
+              '__example__': 'example_value'
+            };
+          });
+
+          // Separate text elements (go outside Form) from input elements (go inside Form)
+          const textElements: any[] = [];
+          const formChildren: any[] = [];
+
+          (s.components || []).forEach((c: any, cIdx: number) => {
+            const fieldName = `field_${idx}_${cIdx}`;
+
+            if (c.type === 'text') {
+              textElements.push({ type: 'TextHeading', text: c.label });
+            } else if (c.type === 'text-input') {
+              formChildren.push({
+                type: 'TextInput',
+                label: c.label,
+                name: fieldName,
+                required: c.required ?? false,
+                'input-type': 'text'
+              });
+            } else if (c.type === 'dropdown') {
+              formChildren.push({
+                type: 'Dropdown',
+                label: c.label,
+                name: fieldName,
+                required: c.required ?? false,
+                'data-source': (c.options || []).map((o: any) => ({
+                  id: o.value || o.id || `opt_${Math.random().toString(36).substring(7)}`,
+                  title: o.label || o.title || 'Option'
+                }))
+              });
+            } else if (c.type === 'radio') {
+              formChildren.push({
+                type: 'RadioButtonsGroup',
+                label: c.label,
+                name: fieldName,
+                required: c.required ?? false,
+                'data-source': (c.options || []).map((o: any) => ({
+                  id: o.value || o.id || `opt_${Math.random().toString(36).substring(7)}`,
+                  title: o.label || o.title || 'Option'
+                }))
+              });
+            } else if (c.type === 'checkbox') {
+              formChildren.push({
+                type: 'CheckboxGroup',
+                label: c.label,
+                name: fieldName,
+                'min-selected-items': c.required ? 1 : 0,
+                'max-selected-items': 10,
+                'data-source': (c.options || []).map((o: any) => ({
+                  id: o.value || o.id || `opt_${Math.random().toString(36).substring(7)}`,
+                  title: o.label || o.title || 'Option'
+                }))
+              });
+            }
+          });
+
+          // Build the payload for navigation or completion
+          let actionPayload: any = {};
+
+          if (isLast) {
+            // Final screen: collect data from previous screens + current form
+            fieldsFromPreviousScreens.forEach(f => {
+              actionPayload[f.fieldName] = `\${data.${f.fieldName}}`;
+            });
+            fieldsFromThisScreen.forEach(f => {
+              actionPayload[f.fieldName] = `\${form.${f.fieldName}}`;
+            });
+          } else {
+            // Intermediate screen: pass previous data + current form to next screen
+            fieldsFromPreviousScreens.forEach(f => {
+              actionPayload[f.fieldName] = `\${data.${f.fieldName}}`;
+            });
+            fieldsFromThisScreen.forEach(f => {
+              actionPayload[f.fieldName] = `\${form.${f.fieldName}}`;
+            });
+          }
+
+          // Add Footer inside the Form
+          formChildren.push({
+            type: 'Footer',
+            label: s.buttonLabel || (isLast ? 'Submit' : 'Next'),
+            'on-click-action': {
+              name: isLast ? 'complete' : 'navigate',
+              ...(isLast
+                ? { payload: actionPayload }
+                : {
+                  next: { type: 'screen', name: nextScreenId },
+                  payload: actionPayload
                 }
-              ]
+              )
+            }
+          });
+
+          // Build screen structure
+          const screenChildren: any[] = [
+            ...textElements,
+            {
+              type: 'Form',
+              name: `form_${screenId}`,
+              children: formChildren
+            }
+          ];
+
+          return {
+            id: screenId,
+            title: s.title || 'Form',
+            terminal: isLast,
+            ...(isLast ? { success: true } : {}),
+            data: isFirst ? {} : dataDeclaration,
+            layout: {
+              type: 'SingleColumnLayout',
+              children: screenChildren
             }
           };
         })
       };
 
-      console.log('🚀 Sending Baseline Flow JSON (v2.1)...');
+      console.log('🚀 Sending Static Flow JSON (v6.0):', JSON.stringify(metaFlowJson, null, 2));
 
-      // 3. Upload Flow JSON Asset (Multipart Strategy)
+      // 3. Upload Flow JSON Asset
       const fileBuffer = Buffer.from(JSON.stringify(metaFlowJson));
       const form = new FormData();
       form.append('name', 'flow.json');
@@ -720,10 +906,33 @@ export class FacebookService {
         ),
       );
 
-      console.log('✅ Flow Asset uploaded. Waiting 2s for Meta to process...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log('✅ Flow Asset uploaded. Waiting 3s for Meta to process...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
-      // 4. Publish the Flow
+      // 4. Get Validation Errors (for debugging)
+      console.log('🔍 Checking for validation errors...');
+      try {
+        const validationRes = await firstValueFrom(
+          this.httpService.get(
+            `https://graph.facebook.com/v20.0/${flowId}`,
+            { params: { access_token: accessToken, fields: 'validation_errors,status,json_version' } }
+          )
+        );
+        console.log('📋 Flow Status:', validationRes.data.status);
+        console.log('📋 JSON Version:', validationRes.data.json_version);
+        if (validationRes.data.validation_errors && validationRes.data.validation_errors.length > 0) {
+          console.error('❌ VALIDATION ERRORS FOUND:');
+          validationRes.data.validation_errors.forEach((err: any, idx: number) => {
+            console.error(`   [${idx + 1}] ${JSON.stringify(err)}`);
+          });
+        } else {
+          console.log('✅ No validation errors detected.');
+        }
+      } catch (valErr: any) {
+        console.warn('⚠️ Could not fetch validation status:', valErr.response?.data?.error?.message || valErr.message);
+      }
+
+      // 5. Auto-Publish the Flow
       console.log('🚀 Publishing Flow on Meta...');
       await firstValueFrom(
         this.httpService.post(
@@ -732,15 +941,81 @@ export class FacebookService {
           { params: { access_token: accessToken } }
         )
       );
-      console.log('✅ Flow published successfully');
+      console.log('✅ Flow published successfully!');
 
-      return { success: true, flowId };
+      return {
+        success: true,
+        flowId,
+        status: 'PUBLISHED',
+        message: 'Flow created and published successfully!'
+      };
     } catch (error: any) {
-      console.error('❌ Meta API Error Detail:', error.response?.data?.error || error.message);
-      const metaMsg = error.response?.data?.error?.message || error.message;
       const subcode = error.response?.data?.error?.error_subcode;
 
+      // Auto-Fix for 4233012: Missing public key
+      if (subcode === 4233012) {
+        console.log('⚠️ Missing Flow Public Key detected. Attempting to auto-register...');
+        try {
+          await this.registerFlowEncryptionKey(tenantKey, phoneNumberId);
+          console.log('✅ Public Key registered. Retrying Flow publication...');
+
+          // Retry step 4
+          await firstValueFrom(
+            this.httpService.post(
+              `https://graph.facebook.com/v20.0/${flowId}/publish`,
+              {},
+              { params: { access_token: accessToken } }
+            )
+          );
+
+          return {
+            success: true,
+            flowId,
+            status: 'PUBLISHED',
+            message: 'Flow created and published successfully (applied encryption key fix)!'
+          };
+        } catch (innerError: any) {
+          console.error('❌ Failed to auto-register Flow Public Key:', innerError.response?.data?.error || innerError.message);
+        }
+      }
+
+      console.error('❌ Meta API Error Detail:', error.response?.data?.error || error.message);
+      const metaMsg = error.response?.data?.error?.message || error.message;
       throw new Error(`Flow API Error [${subcode || 'N/A'}]: ${metaMsg}`);
     }
+  }
+
+  /**
+   * Generates a 2048-bit RSA key pair and registers the public key with Meta
+   * for WhatsApp Flows encryption.
+   */
+  private async registerFlowEncryptionKey(tenantKey: string, phoneNumberId: string) {
+    const ds = await this.dbManager.getOrCreateTenantConnection(tenantKey);
+    const repo = ds.getRepository(MetaConnection);
+    const connection = await repo.findOne({ where: { phoneNumberId, active: true } });
+    if (!connection) throw new Error('WhatsApp connection not found');
+
+    const { accessToken } = connection;
+
+    // 1. Generate RSA Key Pair (2048-bit)
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+
+    // 2. Register Public Key with Meta
+    await firstValueFrom(
+      this.httpService.post(
+        `https://graph.facebook.com/v20.0/${phoneNumberId}/whatsapp_business_encryption`,
+        { business_public_key: publicKey },
+        { params: { access_token: accessToken } }
+      )
+    );
+
+    // 3. Save key pair to database for later decryption
+    connection.flowPublicKey = publicKey;
+    connection.flowPrivateKey = privateKey;
+    await repo.save(connection);
   }
 }

@@ -6,7 +6,7 @@ import {
   ForbiddenException,
   Logger
 } from '@nestjs/common';
-import { DataSource, In } from 'typeorm';
+import { DataSource, In, IsNull } from 'typeorm';
 import { Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Message } from './entities/message.entity';
@@ -33,6 +33,45 @@ export class MessageService {
     private readonly eventEmitter: EventEmitter2,
   ) { }
 
+  async getTemplateResponses(tenantKey: string, userId: string, email: string) {
+    const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
+    const msgRepo = dataSource.getRepository(Message);
+
+    // Fetch messages from customers (!sender_user_id)
+    const responses = await msgRepo.find({
+      where: {
+        sender_user_id: IsNull(),
+      },
+      relations: ['parentMessage', 'conversation'],
+      order: { created_at: 'DESC' },
+    });
+
+    // Filter: parent is a template OR message has flow_response metadata
+    const templateResponses = responses.filter(r =>
+      r.parentMessage?.templateName ||
+      r.metadata?.flow_response ||
+      r.metadata?.flow_name
+    );
+
+    return {
+      success: true,
+      data: templateResponses.map(r => ({
+        id: r.id,
+        content: r.content,
+        createdAt: r.created_at,
+        messageType: r.type,
+        metadata: r.metadata,
+        // Use flow_name from metadata if no parent template
+        templateName: r.parentMessage?.templateName || r.metadata?.flow_name || 'Flow Response',
+        phone: r.conversation?.phone_number,
+        businessPhone: r.conversation?.business_display_phone_number,
+        businessPhoneId: r.conversation?.business_phone_number_id,
+        leadName: r.conversation?.lead_name,
+        conversationId: r.conversation?.id,
+      })),
+    };
+  }
+
   public async getRepos(dataSource: DataSource) {
     return {
       message: dataSource.getRepository(Message),
@@ -49,7 +88,7 @@ export class MessageService {
     whatsappMessageId?: string,
   ): Promise<{ success: true; data: MessageWithSender }> {
     this.logger.log('=== MESSAGE CREATE START ===');
-    this.logger.log(`User: ${userId} | DTO:`, dto);
+    this.logger.log(`Full CreateMessageDto: ${JSON.stringify(dto, null, 2)}`);
 
     try {
       const dataSource = await this.dbManager.getOrCreateTenantConnection(tenantKey);
@@ -108,6 +147,9 @@ export class MessageService {
         whatsapp_message_id: whatsappMessageId ?? undefined,
         templateName: dto.templateName,
         templateLanguage: dto.templateLanguage,
+        templateButtons: dto.templateButtons,
+        templateParams: dto.templateParams,
+        metadata: dto.metadata,
       });
 
       const saved = await msgRepo.save(msgEntity);
@@ -160,8 +202,71 @@ export class MessageService {
 
             // Format parameters for Meta Graph API
             const components: any[] = [];
+            // 1. Header Parameters (MUST come first for some Meta templates)
+            if (dto.media_url || dto.templateLocation || (dto.templateHeaderParams && dto.templateHeaderParams.length > 0)) {
+              let headerComp: any = { type: 'header', parameters: [] };
 
-            // 1. Body Parameters
+              if (dto.media_url) {
+                // ... (existing media header logic)
+                let headerType: 'image' | 'video' | 'document' | 'audio' = 'document';
+                const lowerUrl = dto.media_url.toLowerCase();
+                if (lowerUrl.match(/\.(jpg|jpeg|png|webp|gif)$/)) headerType = 'image';
+                else if (lowerUrl.match(/\.(mp4|3gpp|mov)$/)) headerType = 'video';
+                else if (lowerUrl.match(/\.(mp3|ogg|m4a)$/)) headerType = 'audio';
+
+                let metaMediaId: string | undefined;
+
+                if (dto.media_url.includes('/uploads/')) {
+                  const relativePath = dto.media_url.substring(dto.media_url.indexOf('/uploads/'));
+                  const physicalPath = path.join(process.cwd(), relativePath);
+                  try {
+                    this.logger.log(`Uploading local template header to Meta: ${physicalPath}`);
+                    metaMediaId = await this.whatsAppService.uploadMedia(physicalPath, headerType, opts);
+                    this.logger.log(`Meta Media ID obtained: ${metaMediaId}`);
+                  } catch (err) {
+                    this.logger.error(`Meta Template Media Upload Failed: ${err.message}`);
+                  }
+                }
+
+                const mediaParam: any = {};
+                if (metaMediaId) {
+                  mediaParam.id = metaMediaId;
+                } else {
+                  mediaParam.link = dto.media_url;
+                }
+
+                if (headerType === 'document' && dto.filename) {
+                  mediaParam.filename = dto.filename;
+                }
+
+                headerComp.parameters.push({
+                  type: headerType,
+                  [headerType]: mediaParam
+                });
+              } else if (dto.templateLocation) {
+                const loc = dto.templateLocation;
+                headerComp.parameters.push({
+                  type: 'location',
+                  location: {
+                    latitude: loc.lat,
+                    longitude: loc.lng,
+                    name: loc.name || 'Location',
+                    address: loc.address || loc.name || 'Location Address'
+                  }
+                });
+              } else if (dto.templateHeaderParams && dto.templateHeaderParams.length > 0) {
+                headerComp.parameters = dto.templateHeaderParams.map((val: string) => ({
+                  type: 'text',
+                  text: val || ' '
+                }));
+              }
+
+              if (headerComp.parameters.length > 0) {
+                components.push(headerComp);
+              }
+            }
+
+            // 2. Body Parameters
             if (dto.templateParams && dto.templateParams.length > 0) {
               components.push({
                 type: 'body',
@@ -172,13 +277,43 @@ export class MessageService {
               });
             }
 
-            // 2. Button Parameters (e.g. dynamic URLs)
-            if (dto.templateButtonParams && dto.templateButtonParams.length > 0) {
-              dto.templateButtonParams.forEach(btn => {
+            // 3. Button Parameters
+            const buttonPayloads = dto.templateButtonParams || [];
+            if (dto.templateButtons && dto.templateButtons.length > 0) {
+              dto.templateButtons.forEach((btn, idx) => {
+                const param = buttonPayloads.find(p => p.index === idx);
+
+                if (btn.type === 'FLOW') {
+                  components.push({
+                    type: 'button',
+                    sub_type: 'flow',
+                    index: String(idx),
+                    parameters: [{
+                      type: 'action',
+                      action: {
+                        flow_token: `token_${saved.id}`,
+                        flow_action_data: {}
+                      }
+                    }]
+                  });
+                } else if (param) {
+                  components.push({
+                    type: 'button',
+                    sub_type: btn.type.toLowerCase() === 'url' ? 'url' : 'quick_reply',
+                    index: String(idx),
+                    parameters: [{
+                      type: 'text',
+                      text: param.value || ' '
+                    }]
+                  });
+                }
+              });
+            } else if (buttonPayloads.length > 0) {
+              buttonPayloads.forEach(btn => {
                 components.push({
                   type: 'button',
                   sub_type: 'url',
-                  index: String(btn.index), // Meta expects string index
+                  index: String(btn.index),
                   parameters: [{
                     type: 'text',
                     text: btn.value || ' '
@@ -187,57 +322,37 @@ export class MessageService {
               });
             }
 
-            // 3. Header Parameters
-            // If the user didn't specify, we use body params as a fallback if the DTO is extended, 
-            // but for now let's rely on the explicit fields if we add them. 
-            // Better yet, let's check if there are any specific header params.
-            if ((dto as any).templateHeaderParams && (dto as any).templateHeaderParams.length > 0) {
-              components.push({
-                type: 'header',
-                parameters: (dto as any).templateHeaderParams.map(val => ({
-                  type: 'text',
-                  text: val || ' '
-                }))
-              });
-            }
-
-            this.logger.log(`Constructed Components: ${JSON.stringify(components)}`);
-
+            this.logger.log(`Final Components for WhatsApp: ${JSON.stringify(components, null, 2)}`);
             sentWhatsappId = await this.whatsAppService.sendTemplateMessage(
               conv.phone_number,
               dto.templateName,
               dto.templateLanguage || 'en_US',
               opts,
-              components,
+              components
             );
+            this.logger.log(`WhatsApp send successful. Meta ID: ${sentWhatsappId}`);
           } else if (parentWhatsAppMessageId) {
-            this.logger.log(`Sending REPLY to WhatsApp message ID: ${parentWhatsAppMessageId}`);
+            this.logger.log(`Sending REPLY to WhatsApp message ID: ${parentWhatsAppMessageId} | Type: ${dto.type}`);
             sentWhatsappId = await this.whatsAppService.sendReplyMessage(
               conv.phone_number,
-              dto.content?.trim() || '',
+              dto.content || '',
               parentWhatsAppMessageId,
-              opts
+              opts,
             );
-          } else if (dto.content?.trim()) {
+          } else {
+            this.logger.log(`Sending DIRECT message to WhatsApp | Type: ${dto.type}`);
             sentWhatsappId = await this.whatsAppService.sendTextMessage(
               conv.phone_number,
-              dto.content.trim(),
-              opts
+              dto.content || '',
+              opts,
             );
           }
-
-          // Save WhatsApp message ID for future replies
-          if (sentWhatsappId && sentWhatsappId !== 'sent') {
-            await msgRepo.update(saved.id, { whatsapp_message_id: sentWhatsappId });
-            savedWithSender.whatsapp_message_id = sentWhatsappId;
-            this.logger.log(`WhatsApp message ID saved: ${sentWhatsappId}`);
-          }
-        } catch (waError: any) {
+        } catch (e: any) {
           this.logger.error('Failed to send message to WhatsApp', {
-            error: waError.message,
+            error: e.message,
+            stack: e.stack,
             phone: conv.phone_number,
             content: dto.content,
-            replyTo: parentWhatsAppMessageId,
           });
           // Don't fail the whole operation
         }
@@ -330,6 +445,10 @@ export class MessageService {
     userId: string,
     email: string,
   ): Promise<{ success: true; message: string }> {
+    this.logger.log(`Creating message for conversation ${conversationId}`);
+    // Assuming 'dto' is not available here, using conversationId as a placeholder
+    // If 'dto' was intended to be logged, this change should be in the 'create' method.
+    this.logger.log(`Full CreateMessageDto: ${JSON.stringify({ conversation_id: conversationId }, null, 2)}`);
     const { dataSource } = await this.dbManager.getConnectionForUser({ id: userId, email });
     const { message: msgRepo } = await this.getRepos(dataSource);
 
@@ -456,6 +575,45 @@ export class MessageService {
     await fs.unlink(filePath).catch(() => { });
 
     return { success: true, data: updatedWithSender };
+  }
+
+  /**
+   * Simple upload for template headers or other cases 
+   * where we just need the URL without sending a message yet.
+   */
+  async uploadMediaOnly(
+    tenantKey: string,
+    file: Express.Multer.File,
+    userId: string,
+    email: string,
+  ): Promise<{ success: true; data: { media_url: string; filename: string } }> {
+    const tmpDir = path.join(process.cwd(), 'tmp');
+    const safeFileName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const filePath = path.join(tmpDir, safeFileName);
+
+    await fs.mkdir(tmpDir, { recursive: true });
+    await fs.writeFile(filePath, file.buffer);
+
+    const uploadsDir = path.join(process.cwd(), 'uploads', tenantKey);
+    await fs.mkdir(uploadsDir, { recursive: true });
+
+    const timestamp = Date.now();
+    const ext = path.extname(safeFileName);
+    const permanentFileName = `${timestamp}_${path.basename(safeFileName, ext)}${ext}`;
+    const permanentFilePath = path.join(uploadsDir, permanentFileName);
+
+    await fs.writeFile(permanentFilePath, file.buffer);
+    const permanentUrl = `/uploads/${tenantKey}/${permanentFileName}`;
+
+    await fs.unlink(filePath).catch(() => { });
+
+    return {
+      success: true,
+      data: {
+        media_url: permanentUrl,
+        filename: safeFileName
+      }
+    };
   }
 
   async forward(

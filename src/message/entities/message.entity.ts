@@ -73,6 +73,15 @@ export class Message {
   @Column({ nullable: true })
   templateLanguage?: string;
 
+  @Column('simple-json', { nullable: true })
+  templateButtons?: { type: string; text: string; url?: string; phone_number?: string }[];
+
+  @Column('simple-array', { nullable: true })
+  templateParams?: string[];
+
+  @Column('simple-json', { nullable: true })
+  metadata?: any;
+
   @Column({ nullable: true })
   createdBy?: string;
 

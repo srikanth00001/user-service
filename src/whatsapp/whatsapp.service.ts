@@ -201,9 +201,11 @@ export class WhatsAppService {
         headers: this.getHeaders(undefined, opts.accessToken),
         timeout: 30_000,
       });
+      this.logger.log('--- WHATSAPP RESPONSE SUCCESS ---');
+      this.logger.log(JSON.stringify(res.data, null, 2));
       return res.data.messages?.[0]?.id || 'sent';
     } catch (error: any) {
-      this.logger.error('WhatsApp send failed', {
+      this.logger.error('--- WHATSAPP SEND FAILED ---', {
         payload,
         error: error.response?.data || error.message,
       });

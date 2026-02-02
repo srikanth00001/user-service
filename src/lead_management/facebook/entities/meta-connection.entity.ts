@@ -56,4 +56,10 @@ export class MetaConnection {
 
   @Column({ name: 'webhook_verified', default: false })
   webhookVerified: boolean;
+
+  @Column({ name: 'flow_public_key', type: 'text', nullable: true })
+  flowPublicKey?: string;
+
+  @Column({ name: 'flow_private_key', type: 'text', nullable: true })
+  flowPrivateKey?: string;
 }

@@ -68,6 +68,7 @@ export class TeamInboxService {
     businessPhoneNumberId?: string;
     mediaUrl?: string;
     filename?: string;
+    metadata?: any;
   }) {
     const dataSource = await this.dbManager.getOrCreateTenantConnection(data.tenantKey);
     const { message: msgRepo, conversation: convRepo } = await this.getRepos(dataSource);
@@ -140,6 +141,7 @@ export class TeamInboxService {
       parent_message_id: data.parentMessageId,
       media_url: data.mediaUrl,
       filename: data.filename,
+      metadata: data.metadata,
     };
 
     const msg = await this.messageService.create(
