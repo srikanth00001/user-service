@@ -61,8 +61,9 @@ export class MessageService {
         createdAt: r.created_at,
         messageType: r.type,
         metadata: r.metadata,
-        // Use flow_name from metadata if no parent template
-        templateName: r.parentMessage?.templateName || r.metadata?.flow_name || 'Flow Response',
+        // Priority: 1. Parent Template 2. Flow Name (with prefix) 3. Generic Label
+        templateName: r.parentMessage?.templateName
+          || (r.metadata?.flow_name ? `Flow: ${r.metadata.flow_name}` : 'Flow Response'),
         phone: r.conversation?.phone_number,
         businessPhone: r.conversation?.business_display_phone_number,
         businessPhoneId: r.conversation?.business_phone_number_id,
@@ -355,6 +356,17 @@ export class MessageService {
             content: dto.content,
           });
           // Don't fail the whole operation
+        }
+
+        // === UPDATE WHATSAPP ID IN DB ===
+        if (sentWhatsappId) {
+          try {
+            await msgRepo.update(saved.id, { whatsapp_message_id: sentWhatsappId });
+            savedWithSender.whatsapp_message_id = sentWhatsappId;
+            this.logger.log(`Linked message ${saved.id} with WhatsApp ID: ${sentWhatsappId}`);
+          } catch (updateErr) {
+            this.logger.error(`Failed to link message ${saved.id} with WhatsApp ID: ${updateErr.message}`);
+          }
         }
       }
 
